@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Advanced Salesforce Log Analyzer",
+  "version": "1.0.0",
+  "description": "Professional debug log analyzer for Salesforce with advanced features",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "https://*.salesforce.com/*",
+    "https://*.force.com/*",
+    "https://*.salesforce-setup.com/*"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.salesforce.com/*",
+        "https://*.lightning.force.com/*",
+        "https://*.visualforce.com/*",
+        "https://*.salesforce-setup.com/*"
+      ],
+      "all_frames": true,
+      "js": ["content/content.js"],
+      "css": ["styles/inject.css"]
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html"
+  },
+  "side_panel": {
+    "default_path": "sidepanel/sidepanel.html"
+  }
+}

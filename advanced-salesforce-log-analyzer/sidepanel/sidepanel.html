@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <title>Advanced Analyzer</title>
+  <link rel="stylesheet" href="../styles/common.css">
+  <link rel="stylesheet" href="../styles/themes.css">
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+
+<body>
+  <div class="app-container">
+    <header>
+      <h1>Log Analyzer</h1>
+      <div class="theme-toggle" id="theme-toggle" style="cursor: pointer;">🌙</div>
+    </header>
+    <nav class="tabs">
+      <button class="tab active" data-target="raw-log">Log Explorer</button>
+      <button class="tab" data-target="raw-tree">Execution Tree</button>
+      <button class="tab" data-target="apex-debug">Apex Debug</button>
+      <button class="tab" data-target="method-tree">Method Hierarchy</button>
+      <button class="tab" data-target="dml-dashboard">DML</button>
+      <button class="tab" data-target="soql-analyzer">SOQL</button>
+      <button class="tab" data-target="perf-dashboard">Performance</button>
+      <button class="tab" data-target="limits">Limits</button>
+      <button class="tab" data-target="errors">Errors</button>
+      <button class="tab" data-target="timeline">Timeline</button>
+    </nav>
+    <main class="tab-content">
+      <div id="raw-log" class="panel active">
+        <h2>Log Explorer</h2>
+      </div>
+      <div id="raw-tree" class="panel">
+        <h2>Execution Tree</h2>
+      </div>
+      <div id="apex-debug" class="panel">
+        <h2>Apex Debug Logs</h2>
+      </div>
+      <div id="method-tree" class="panel">
+        <h2>Method Hierarchy</h2>
+      </div>
+      <div id="dml-dashboard" class="panel">
+        <h2>DML Operations</h2>
+      </div>
+      <div id="soql-analyzer" class="panel">
+        <h2>SOQL Queries</h2>
+      </div>
+      <div id="perf-dashboard" class="panel">
+        <h2>Performance Metrics</h2>
+      </div>
+      <div id="limits" class="panel">
+        <h2>Governor Limits</h2>
+      </div>
+      <div id="errors" class="panel">
+        <h2>Error Inspector</h2>
+      </div>
+      <div id="timeline" class="panel">
+        <h2>Timeline</h2>
+      </div>
+    </main>
+    <script src="../lib/log-parser.js"></script>
+    <script src="../lib/analyzer.js"></script>
+    <script src="../lib/tree-builder.js"></script>
+    <script src="../lib/chart-builder.js"></script>
+    <script src="../components/raw-log-view.js"></script>
+    <script src="../components/raw-tree-view.js"></script>
+    <script src="../components/apex-debug-view.js"></script>
+    <script src="../components/method-tree.js"></script>
+    <script src="../components/dml-dashboard.js"></script>
+    <script src="../components/soql-analyzer.js"></script>
+    <script src="../components/performance-dashboard.js"></script>
+    <script src="../components/governor-limits.js"></script>
+    <script src="../components/error-inspector.js"></script>
+    <script src="../components/timeline.js"></script>
+    <script src="sidepanel.js"></script>
+</body>
+
+</html>

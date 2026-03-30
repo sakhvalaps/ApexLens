@@ -1,0 +1,16 @@
+body.dark-theme {
+  --primary-color: #90CDF4;
+  --text-main: #E2E8F0;
+  --bg-main: #1A202C;
+  --bg-surface: #2D3748;
+  --border-color: #4A5568;
+}
+
+body.dark-theme button {
+  background-color: var(--primary-color);
+  color: #1A202C;
+}
+
+body.dark-theme button:hover {
+  background-color: #63B3ED;
+}
