@@ -4,14 +4,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   tabs.forEach(tab => {
     tab.addEventListener('click', () => {
-      // Deactivate all
+      if (tab.classList.contains('disabled')) return;
       tabs.forEach(t => t.classList.remove('active'));
       panels.forEach(p => p.classList.remove('active'));
-
-      // Activate clicked
       tab.classList.add('active');
       const targetId = tab.getAttribute('data-target');
       document.getElementById(targetId).classList.add('active');
+
+      if (targetId === 'method-flow' && flowGraph._pendingData) {
+        flowGraph.render(flowGraph._pendingData);
+        flowGraph._pendingData = null;
+      }
     });
   });
 
@@ -26,6 +29,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const rawTreeView = new window.RawTreeView('raw-tree');
   const apexDebugView = new window.ApexDebugView('apex-debug');
   const methodTree = new window.MethodTree('method-tree');
+  const flowGraph = new window.FlowGraph('method-flow');
   const dmlDashboard = new window.DMLDashboard('dml-dashboard');
   const soqlAnalyzer = new window.SOQLAnalyzer('soql-analyzer');
   const perfDashboard = new window.PerformanceDashboard('perf-dashboard');
@@ -34,7 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const timelineLoader = new window.TimelineVisualization('timeline');
 
   // Provide a demo log analysis button for testing
-  const h1 = document.querySelector('h1');
+  const titleArea = document.querySelector('.title-area');
   
   // Create a loading state header
   const statusEl = document.createElement('span');
@@ -42,7 +46,9 @@ document.addEventListener('DOMContentLoaded', () => {
   statusEl.style.fontSize = '0.9rem';
   statusEl.style.color = '#888';
   statusEl.textContent = 'Checking for loaded logs...';
-  h1.parentElement.insertBefore(statusEl, document.getElementById('theme-toggle'));
+  if (titleArea) {
+    titleArea.appendChild(statusEl);
+  }
 
   function processLog(rawLogText) {
     statusEl.textContent = 'Parsing...';
@@ -60,6 +66,13 @@ document.addEventListener('DOMContentLoaded', () => {
         rawTreeView.render(fullTreeData);
         apexDebugView.render(logs);
         methodTree.render(treeData);
+        const significantTreeData = window.TreeBuilder.buildSignificantTree(logs);
+        const flowTab = document.getElementById('method-flow');
+        if (flowTab && flowTab.classList.contains('active')) {
+          flowGraph.render(significantTreeData);
+        } else {
+          flowGraph._pendingData = significantTreeData;
+        }
         dmlDashboard.render(analysis);
         soqlAnalyzer.render(analysis);
         perfDashboard.render(analysis);

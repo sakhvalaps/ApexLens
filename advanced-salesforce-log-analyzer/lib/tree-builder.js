@@ -6,8 +6,16 @@ class TreeBuilder {
     for (const log of logs) {
       if (log.event === 'METHOD_ENTRY') {
         const parent = stack[stack.length - 1];
+
+        // Extract proper method name from the pipeline-separated details
+        let properName = log.details || 'Unknown Method';
+        if (properName.includes('|')) {
+          const parts = properName.split('|');
+          properName = parts[parts.length - 1];
+        }
+
         const node = {
-          name: log.details,
+          name: properName,
           entryLog: log,
           children: [],
           depth: stack.length,
@@ -37,23 +45,14 @@ class TreeBuilder {
     const entryEvents = ['EXECUTION_STARTED', 'CODE_UNIT_STARTED', 'METHOD_ENTRY', 'SOQL_EXECUTE_BEGIN', 'DML_BEGIN', 'CALLOUT_REQUEST', 'VF_APEX_CALL_START'];
     const exitEvents = ['EXECUTION_FINISHED', 'CODE_UNIT_FINISHED', 'METHOD_EXIT', 'SOQL_EXECUTE_END', 'DML_END', 'CALLOUT_RESPONSE', 'VF_APEX_CALL_END'];
 
-    // Smart filtering: events that clutter the tree without adding high-level value
-    const noiseEvents = new Set([
-      'HEAP_ALLOCATE', 'STATEMENT_EXECUTE', 'VARIABLE_SCOPE_BEGIN', 'VARIABLE_ASSIGNMENT',
-      'USER_INFO', 'CUMULATIVE_LIMIT_USAGE', 'CUMULATIVE_LIMIT_USAGE_END',
-      'SYSTEM_MODE_ENTER', 'SYSTEM_MODE_EXIT', 'CODE_UNIT_STARTED', 'CODE_UNIT_FINISHED' 
-      // Wait, CODE_UNIT is useful. Let's keep CODE_UNIT!
-    ]);
-
-    // Let's refine the noise list, keeping LIMIT_USAGE_FOR_NS so we don't miss limits
     const ignoreEvents = ['HEAP_ALLOCATE', 'STATEMENT_EXECUTE', 'VARIABLE_SCOPE_BEGIN', 'VARIABLE_ASSIGNMENT', 'USER_INFO', 'CUMULATIVE_LIMIT_USAGE', 'CUMULATIVE_LIMIT_USAGE_END'];
 
     logs.forEach(log => {
       if (log.event === 'HEADER' || ignoreEvents.includes(log.event)) return;
-      
+
       const currentParent = stack[stack.length - 1];
       const nanos = parseInt(log.nanos || '0', 10);
-      
+
       if (entryEvents.includes(log.event)) {
         const node = {
           id: idCounter++,
@@ -68,12 +67,11 @@ class TreeBuilder {
         currentParent.children.push(node);
         stack.push(node);
       } else if (exitEvents.includes(log.event)) {
-        if (stack.length > 1) { // ensure we don't pop ROOT
+        if (stack.length > 1) {
           const node = stack.pop();
           node.durationNs = Math.max(0, nanos - node.timeNs);
         }
       } else {
-        // Leaf log
         currentParent.children.push({
           id: idCounter++,
           log: log,
@@ -98,6 +96,99 @@ class TreeBuilder {
     computeSelfTime(root);
 
     return root;
+  }
+
+  static buildSignificantTree(logs) {
+    const fullRoot = this.buildFullTree(logs);
+
+    const noisePrefixes = new Set([
+      'SYSTEM_METHOD_ENTRY', 'SYSTEM_METHOD_EXIT',
+      'CONSTRUCTOR_ENTRY', 'CONSTRUCTOR_EXIT',
+      'SYSTEM_MODE_ENTER', 'SYSTEM_MODE_EXIT',
+      'LIMIT_USAGE', 'CUMULATIVE_LIMIT',
+      'HEAP_ALLOCATE', 'STATEMENT_EXECUTE',
+      'VARIABLE_SCOPE', 'VARIABLE_ASSIGNMENT',
+      'USER_INFO', 'CODE_UNIT_STARTED', 'CODE_UNIT_FINISHED'
+    ]);
+
+    const minDurationMs = 5;
+
+    const isSignificant = (node) => {
+      const evt = (node.event || '').toUpperCase();
+      if (noisePrefixes.has(evt)) return false;
+      if (evt.includes('SOQL') || evt.includes('DML') || evt.includes('CALLOUT')) return true;
+      if (evt.includes('METHOD')) {
+        const name = (node.details || node.name || '').toLowerCase();
+        if (name.startsWith('system.') || name.startsWith('<init>') || name.includes('wrappers.') || name.includes('encodingutil.') || name.includes('url.')) {
+          const durMs = node.durationNs / 1000000;
+          return durMs >= minDurationMs;
+        }
+        return true;
+      }
+      if (evt.includes('EXECUTION') || evt.includes('CODE_UNIT')) return true;
+      return false;
+    };
+
+    const filterTree = (node, parentKept) => {
+      const kept = isSignificant(node) || parentKept;
+      const filteredChildren = [];
+      for (const child of (node.children || [])) {
+        const childKept = isSignificant(child);
+        if (childKept) {
+          const filteredChild = filterTree(child, true);
+          filteredChildren.push(filteredChild);
+        } else {
+          const grandResults = filterTree(child, false);
+          if (grandResults && grandResults.children && grandResults.children.length > 0) {
+            filteredChildren.push(...grandResults.children);
+          }
+        }
+      }
+      return { ...node, children: filteredChildren };
+    };
+
+    const annotateCallChain = (node, parentName, depth) => {
+      node.callerName = parentName || '—';
+      node.nodeDepth = depth || 0;
+
+      if (!node.name) {
+        const evt = (node.event || '').toUpperCase();
+        if (evt.includes('METHOD') || evt.includes('CALLOUT') || evt.includes('CODE_UNIT')) {
+          let detail = node.details || '';
+          if (detail.includes('|')) {
+            const parts = detail.split('|');
+            node.name = parts[parts.length - 1].trim();
+          } else {
+            node.name = detail.substring(0, 80) || node.event;
+          }
+        } else if (evt.includes('SOQL') || evt.includes('DML')) {
+          let detail = node.details || '';
+          if (detail.includes('|')) {
+            const parts = detail.split('|');
+            node.name = parts[parts.length - 1].trim();
+          } else {
+            node.name = detail.substring(0, 60) || node.event;
+          }
+        } else {
+          node.name = node.details ? node.details.substring(0, 60) : node.event;
+        }
+      }
+
+      if (node.children && node.children.length > 0) {
+        node.callees = node.children.map(c => ({
+          name: c.name || c.event,
+          durationMs: (c.durationNs / 1000000).toFixed(2),
+          event: c.event
+        }));
+      }
+      for (const child of (node.children || [])) {
+        annotateCallChain(child, node.name || node.event, (depth || 0) + 1);
+      }
+    };
+
+    const filtered = filterTree(fullRoot, true);
+    annotateCallChain(filtered, null, 0);
+    return [filtered];
   }
 }
 

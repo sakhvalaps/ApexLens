@@ -6,50 +6,30 @@ class ApexDebugView {
   render(logs) {
     if (!this.container) return;
     
-    // Filter only USER_DEBUG and related Apex events
-    const debugLogs = logs.filter(log => 
-        log.event === 'USER_DEBUG' || 
-        log.event === 'FATAL_ERROR' || 
-        log.event === 'EXCEPTION_THROWN' ||
-        log.event === 'SYSTEM_METHOD_ENTRY' ||
-        log.event === 'SYSTEM_METHOD_EXIT'
-    );
-
-    let html = '<div class="raw-log-controls" style="margin-bottom: 12px; display: flex; gap: 8px;">';
-    html += '<input type="text" placeholder="Search apex debug..." style="padding: 8px; flex: 1; border: 1px solid var(--border-color); border-radius: 4px;"/>';
-    html += '<button style="padding: 8px 16px;">Search</button>';
-    html += '</div>';
-    
-    html += '<div class="raw-log-lines" style="background: var(--bg-surface); border: 1px solid var(--border-color); overflow-x: auto; font-family: Consolas, Monaco, monospace; font-size: 13px; line-height: 1.4; display: flex; flex-direction: column; padding-bottom: 20px;">';
+    const debugLogs = logs.filter(l => l.event === 'USER_DEBUG' || l.event === 'SYSTEM_LOG');
     
     if (debugLogs.length === 0) {
-        html += '<div style="padding: 12px; color: #888;">No Apex debug statements found in this log.</div>';
+      this.container.innerHTML = `
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 75vh; text-align: center; padding: 40px;">
+          <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 20px;">
+            <path d="m18 16 4-4-4-4"></path>
+            <path d="m6 8-4 4 4 4"></path>
+            <path d="m14.5 4-5 16"></path>
+          </svg>
+          <h3 style="font-size: 18px; font-weight: 600; color: var(--text-main); margin: 0 0 8px 0;">No Debug Logs Available</h3>
+          <p style="font-size: 13px; color: var(--text-muted); max-width: 280px; margin: 0 0 24px 0; line-height: 1.6;">No USER_DEBUG or SYSTEM_LOG entries were found in this log.</p>
+        </div>
+      `;
+      return;
     }
-
-    debugLogs.forEach(log => {
-      html += `<div class="log-line" style="display: flex; white-space: pre; border-bottom: 1px solid #f0f0f0;">`;
-      
-      // Gutter (line numbers)
-      html += `<div style="width: 50px; flex-shrink: 0; text-align: right; padding-right: 8px; color: #888; background: #f8f9fa; border-right: 1px solid #ddd; user-select: none; margin-right: 8px;">${log.lineNumber}</div>`;
-      
-      // Content
-      let detailsHtml = this.escapeHtml(log.details);
-      if (log.event.includes('ERROR') || log.event.includes('EXCEPTION') || log.event.includes('FATAL')) {
-          detailsHtml = `<span style="color: #e53e3e; font-weight: bold;">${detailsHtml}</span>`;
-      } else if (log.event === 'USER_DEBUG') {
-          // Highlight USER_DEBUG text in bold blue/green
-          detailsHtml = `<span style="color: #0b7a75; font-weight: 500;">${detailsHtml}</span>`;
-      }
-
-      html += `<div style="padding: 2px 4px;">` +
-        `<span style="color: #2e8b57;">${log.time}</span>|` +
-        `<span style="color: #0000ff;">${this.escapeHtml(log.event)}</span>|` +
-        `<span>${detailsHtml}</span>` +
-      `</div>`;
-      
-      html += `</div>`;
-    });
     
+    let html = '<h2>Apex Debug Logs</h2><div style="margin-top: 16px;">';
+    debugLogs.forEach(log => {
+      const ms = (log.nanos / 1000000).toFixed(2);
+      html += `<div style="padding: 8px 12px; margin-bottom: 6px; background: #f9fafb; border-left: 3px solid #0176d3; border-radius: 4px; font-family: monospace; font-size: 12px;">
+        <span style="color: #6b7280;">[${ms}ms]</span> ${this.escapeHtml(log.details || '')}
+      </div>`;
+    });
     html += '</div>';
     this.container.innerHTML = html;
   }
