@@ -28,7 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const rawLogView = new window.RawLogView('raw-log');
   const rawTreeView = new window.RawTreeView('raw-tree');
   const apexDebugView = new window.ApexDebugView('apex-debug');
-  const methodTree = new window.MethodTree('method-tree');
+
   const flowGraph = new window.FlowGraph('method-flow');
   const dmlDashboard = new window.DMLDashboard('dml-dashboard');
   const soqlAnalyzer = new window.SOQLAnalyzer('soql-analyzer');
@@ -65,7 +65,7 @@ document.addEventListener('DOMContentLoaded', () => {
         rawLogView.render(logs);
         rawTreeView.render(fullTreeData);
         apexDebugView.render(logs);
-        methodTree.render(treeData);
+
         const significantTreeData = window.TreeBuilder.buildSignificantTree(logs);
         const flowTab = document.getElementById('method-flow');
         if (flowTab && flowTab.classList.contains('active')) {
@@ -78,7 +78,7 @@ document.addEventListener('DOMContentLoaded', () => {
         perfDashboard.render(analysis);
         limitsTracker.render(analysis);
         errorInspector.render(analysis);
-        timelineLoader.render(analysis);
+        timelineLoader.render(fullTreeData);
 
         statusEl.textContent = 'Analysis Complete';
         setTimeout(() => { statusEl.style.display = 'none'; }, 3000);

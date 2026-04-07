@@ -100,12 +100,14 @@ class FlowGraph {
             <button id="search-next-btn" title="Next match" style="font-size: 12px; padding: 2px 7px; display: none; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 5px; cursor: pointer; color: #374151; font-weight: 700;">↓</button>
             <button id="search-clear-btn" style="font-size: 11px; padding: 3px 10px; display: none; background: #fef2f2; border: 1px solid #fecaca; border-radius: 5px; color: #dc2626; cursor: pointer; font-weight: 700;">✕</button>
           </div>
+
           <button id="expand-all-btn" style="font-size: 12px; padding: 6px 13px; background: #f8fafc; border: 1.5px solid #e2e8f0; color: #374151; border-radius: 8px; font-weight: 600;">Expand All</button>
           <button id="collapse-all-btn" style="font-size: 12px; padding: 6px 13px; background: #f8fafc; border: 1.5px solid #e2e8f0; color: #374151; border-radius: 8px; font-weight: 600;">Collapse All</button>
           <span style="font-size: 11px; color: var(--text-muted); background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 4px 10px; white-space: nowrap;">
             <b>Scroll</b> zoom &nbsp;·&nbsp; <b>Drag</b> pan &nbsp;·&nbsp; <b>Click</b> expand
           </span>
         </div>
+      </div>
       </div>
       <div id="flow-layout" style="display: flex; gap: 14px; height: 75vh;">
         <div id="d3-canvas" style="flex: 1; border: 1.5px solid var(--border-color); border-radius: 12px; overflow: hidden; background: #fdfdfd; position: relative;">
@@ -114,11 +116,10 @@ class FlowGraph {
             Reset View
           </button>
         </div>
-        <div id="legend-panel" style="width: 220px; flex-shrink: 0; border: 1.5px solid var(--border-color); border-radius: 12px; background: #fff; overflow-y: auto; padding: 0;"></div>
       </div>
     `;
 
-    this.renderLegend();
+
     this.bindSearch();
 
     document.getElementById('expand-all-btn').addEventListener('click', () => this.expandAll());
@@ -127,9 +128,11 @@ class FlowGraph {
     
     const rootData = treeData[0]; 
     
-    const containerRect = document.getElementById("d3-canvas").getBoundingClientRect();
+    const containerRect = document.getElementById("flow-layout").getBoundingClientRect();
     const width = containerRect.width || 800;
     const height = containerRect.height || 600;
+
+
     
     const svg = d3.select("#d3-canvas").append("svg")
       .attr("width", "100%")
@@ -395,6 +398,32 @@ class FlowGraph {
           .style("border", isCurrent ? "2px solid #fff" : "1.5px solid rgba(255,255,255,0.6)")
           .text(`#${idx + 1}`);
       }
+
+      const toggleBtn = card.append("div")
+        .attr("class", "toggle-btn")
+        .style("position",       "absolute")
+        .style("bottom",         "-12px")
+        .style("right",          "10px")
+        .style("width",          "24px")
+        .style("height",         "24px")
+        .style("border-radius",  "50%")
+        .style("display",        (d.children || d._children) ? "flex" : "none")
+        .style("justify-content","center")
+        .style("align-items",    "center")
+        .style("cursor",         "pointer")
+        .style("font-weight",    "bold")
+        .style("font-size",      "15px")
+        .style("line-height",    "1")
+        .style("box-shadow",     "0 2px 6px rgba(0,0,0,0.22)")
+        .style("background",     style.btnBg)
+        .style("color",          style.btnText)
+        .style("border",         `1.5px solid ${style.border}`)
+        .style("pointer-events", "auto")
+        .text(d._children ? "+" : "−")
+        .on("click", (event) => {
+          event.stopPropagation();
+          toggleNode(d);
+        });
     };
 
     const update = (source) => {
@@ -585,30 +614,34 @@ class FlowGraph {
             .style("letter-spacing","0.02em")
             .text(`#${idx + 1}`);
         }
-      });
 
-      // ── Toggle expand/collapse button ──────────────────────────────
-      const toggleBtn = foDiv.append("div")
-        .attr("class", "toggle-btn")
-        .style("position",       "absolute")
-        .style("top",            "-10px")
-        .style("right",          "-10px")
-        .style("width",          "22px")
-        .style("height",         "22px")
-        .style("border-radius",  "50%")
-        .style("display",        d => (d.children || d._children) ? "flex" : "none")
-        .style("justify-content","center")
-        .style("align-items",    "center")
-        .style("cursor",         "pointer")
-        .style("font-weight",    "bold")
-        .style("font-size",      "14px")
-        .style("line-height",    "1")
-        .style("box-shadow",     "0 2px 6px rgba(0,0,0,0.22)")
-        .style("pointer-events", "auto")
-        .on("click", (event, d) => {
-          event.stopPropagation();
-          toggleNode(d);
-        });
+        // ── Toggle expand/collapse button ──────────────────────────────
+        const toggleBtn = card.append("div")
+          .attr("class", "toggle-btn")
+          .style("position",       "absolute")
+          .style("bottom",         "-12px")
+          .style("right",          "10px")
+          .style("width",          "24px")
+          .style("height",         "24px")
+          .style("border-radius",  "50%")
+          .style("display",        (d.children || d._children) ? "flex" : "none")
+          .style("justify-content","center")
+          .style("align-items",    "center")
+          .style("cursor",         "pointer")
+          .style("font-weight",    "bold")
+          .style("font-size",      "15px")
+          .style("line-height",    "1")
+          .style("box-shadow",     "0 2px 6px rgba(0,0,0,0.22)")
+          .style("background",     style.btnBg)
+          .style("color",          style.btnText)
+          .style("border",         `1.5px solid ${style.border}`)
+          .style("pointer-events", "auto")
+          .text(d._children ? "+" : "−")
+          .on("click", (event) => {
+            event.stopPropagation();
+            toggleNode(d);
+          });
+      });
 
       const nodeUpdate = nodeEnter.merge(node);
 
@@ -621,12 +654,6 @@ class FlowGraph {
       nodeUpdate.select("foreignObject div").each(function(d) {
         refreshCard.call(this, d);
       });
-
-      nodeUpdate.select(".toggle-btn")
-        .style("background", d => getNodeStyle(d).btnBg)
-        .style("color", d => getNodeStyle(d).btnText)
-        .style("border", d => `1.5px solid ${getNodeStyle(d).border}`)
-        .text(d => d._children ? "+" : "−");
 
       node.exit().transition()
         .duration(duration)
@@ -891,89 +918,7 @@ class FlowGraph {
     );
   }
 
-  renderLegend() {
-    const legend = document.getElementById('legend-panel');
-    if (!legend) return;
 
-    const eventTypes = [
-      { label: 'SOQL',    color: '#dc2626', bg: '#fef2f2', desc: 'Database queries'      },
-      { label: 'DML',     color: '#7c3aed', bg: '#f5f3ff', desc: 'Database operations'   },
-      { label: 'CALLOUT', color: '#d97706', bg: '#fffbeb', desc: 'External API calls'     },
-      { label: 'METHOD',  color: '#0176d3', bg: '#eff6ff', desc: 'Apex method calls'      },
-      { label: 'EXEC',    color: '#059669', bg: '#ecfdf5', desc: 'Execution context'      },
-      { label: 'UNIT',    color: '#475569', bg: '#f8fafc', desc: 'Code unit boundary'     },
-    ];
-
-    const depthLevels = [
-      { label: 'Root / Entry',     color: '#0176d3' },
-      { label: 'Depth 1 (top)',    color: '#3b82f6' },
-      { label: 'Depth 2 (nested)', color: '#f59e0b' },
-      { label: 'Depth 3+',         color: '#22c55e' },
-      { label: 'Critical (>200ms)',color: '#ef4444' },
-    ];
-
-    legend.innerHTML = `
-      <div style="padding: 16px 14px 14px;">
-        <div style="display: flex; align-items: center; gap: 7px; margin-bottom: 14px;">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0176d3" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
-          <span style="font-size: 11px; font-weight: 800; color: var(--text-main); text-transform: uppercase; letter-spacing: 0.08em;">Legend</span>
-        </div>
-
-        <div style="background: #f9fafb; border-radius: 9px; padding: 10px 12px; margin-bottom: 10px; border: 1px solid #f0f0f0;">
-          <div style="font-size: 10px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 9px;">Event Types</div>
-          <div style="display: flex; flex-direction: column; gap: 5px;">
-            ${eventTypes.map(t => `
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <span style="font-size: 8px; font-weight: 700; color: ${t.color}; background: ${t.bg}; border: 1px solid ${t.color}33; border-radius: 4px; padding: 2px 5px; white-space: nowrap; min-width: 44px; text-align: center;">${t.label}</span>
-                <span style="font-size: 11px; color: #4b5563;">${t.desc}</span>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-
-        <div style="background: #f9fafb; border-radius: 9px; padding: 10px 12px; margin-bottom: 10px; border: 1px solid #f0f0f0;">
-          <div style="font-size: 10px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 9px;">Depth / Performance</div>
-          ${depthLevels.map(p => `
-            <div style="display: flex; align-items: center; gap: 8px; padding: 3px 0;">
-              <span style="width: 10px; height: 10px; border-radius: 50%; background: ${p.color}; flex-shrink: 0; box-shadow: 0 0 0 2px ${p.color}33;"></span>
-              <span style="font-size: 11px; color: #4b5563;">${p.label}</span>
-            </div>
-          `).join('')}
-        </div>
-
-        <div style="background: #fefce8; border: 1.5px solid #fde047; border-radius: 9px; padding: 10px 12px; margin-bottom: 10px;">
-          <div style="font-size: 10px; font-weight: 700; color: #854d0e; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 9px;">Search Highlights</div>
-          <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0;">
-            <span style="width: 16px; height: 16px; border-radius: 4px; background: #fefce8; outline: 2.5px dashed #eab308; outline-offset: 2px; flex-shrink: 0; animation: floatingDash 1.6s ease-in-out infinite;"></span>
-            <span style="font-size: 11px; color: #4b5563;">Active match</span>
-          </div>
-          <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0;">
-            <span style="width: 16px; height: 16px; border-radius: 4px; background: #fef9c3; outline: 2px dashed #ca8a04; outline-offset: 1px; flex-shrink: 0;"></span>
-            <span style="font-size: 11px; color: #4b5563;">Match found</span>
-          </div>
-          <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0;">
-            <span style="width: 16px; height: 16px; border-radius: 4px; background: #f3f4f6; border: 1.5px solid #e5e7eb; opacity: 0.3; flex-shrink: 0;"></span>
-            <span style="font-size: 11px; color: #4b5563;">Dimmed (unrelated)</span>
-          </div>
-          <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0;">
-            <span style="width: 16px; height: 3px; border-radius: 2px; background: #f59e0b; flex-shrink: 0;"></span>
-            <span style="font-size: 11px; color: #4b5563;">Flow path link</span>
-          </div>
-        </div>
-
-        <div style="background: #f9fafb; border-radius: 9px; padding: 10px 12px; border: 1px solid #f0f0f0;">
-          <div style="font-size: 10px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 9px;">Controls</div>
-          <div style="font-size: 11px; color: #4b5563; line-height: 2.0;">
-            <div><b style="color:#374151;">Click node</b> — Expand / Collapse</div>
-            <div><b style="color:#374151;">Scroll</b> — Zoom in / out</div>
-            <div><b style="color:#374151;">Drag</b> — Pan canvas</div>
-            <div><b style="color:#374151;">↑ ↓ buttons</b> — Navigate matches</div>
-            <div><b style="color:#374151;">Enter key</b> — Trigger search</div>
-          </div>
-        </div>
-      </div>
-    `;
-  }
 }
 
 window.FlowGraph = FlowGraph;
