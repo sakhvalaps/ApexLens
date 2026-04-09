@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="../styles/common.css">
   <link rel="stylesheet" href="../styles/themes.css">
   <link rel="stylesheet" href="sidepanel.css">
+
 </head>
 
 <body>
@@ -20,16 +21,31 @@
         </svg>
         <h1>ApexLens</h1>
       </div>
-      <div class="theme-toggle" id="theme-toggle" style="cursor: pointer;" title="Toggle Theme">🌙</div>
+      <div class="header-actions">
+        <button id="history-btn" title="Log History">
+          🕐 History
+        </button>
+        <div class="theme-toggle" id="theme-toggle" style="cursor: pointer;" title="Toggle Theme">🌙</div>
+      </div>
     </header>
     <nav class="tabs">
-      <button class="tab active" data-target="raw-log">
+      <!-- Feature 2: Health Score Overview (first / default tab) -->
+      <button class="tab active" data-target="overview">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+        Overview
+      </button>
+      <button class="tab" data-target="raw-log">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
         Log Explorer
       </button>
       <button class="tab" data-target="method-flow">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M13 6h3a2 2 0 0 1 2 2v7"></path><line x1="6" y1="9" x2="6" y2="21"></line></svg>
         Method Flow
+      </button>
+      <!-- Feature 3: Flame Graph -->
+      <button class="tab" data-target="flame-graph">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"></path></svg>
+        Flame Graph
       </button>
       <button class="tab" data-target="raw-tree">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"></path><path d="m8 7 4-4 4 4"></path><path d="m8 17 4 4 4-4"></path></svg>
@@ -66,10 +82,17 @@
       </button>
     </nav>
     <main class="tab-content">
-      <div id="raw-log" class="panel active">
+      <!-- Feature 2: Overview dashboard (default active) -->
+      <div id="overview" class="panel active">
+        <h2>Transaction Health Overview</h2>
+      </div>
+      <div id="raw-log" class="panel">
         <h2>Log Explorer</h2>
       </div>
       <div id="method-flow" class="panel">
+      </div>
+      <!-- Feature 3: Flame graph panel -->
+      <div id="flame-graph" class="panel">
       </div>
       <div id="raw-tree" class="panel">
         <h2>Execution Tree</h2>
@@ -107,12 +130,15 @@
 
     <script src="../lib/d3.min.js"></script>
     <script src="../components/flow-graph.js"></script>
+    <script src="../components/flame-graph.js"></script>
+    <script src="../components/overview-dashboard.js"></script>
     <script src="../components/dml-dashboard.js"></script>
     <script src="../components/soql-analyzer.js"></script>
     <script src="../components/performance-dashboard.js"></script>
     <script src="../components/governor-limits.js"></script>
     <script src="../components/error-inspector.js"></script>
     <script src="../components/timeline.js"></script>
+    <script src="../components/log-history.js"></script>
     <script src="sidepanel.js"></script>
   </div>
 </body>
