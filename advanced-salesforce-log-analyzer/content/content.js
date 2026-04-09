@@ -61,13 +61,13 @@ function injectAnalyzeButtons() {
 }
 
 function injectDevConsoleIntegration() {
-    if (document.getElementById('asla-devconsole-btn')) return;
+  if (document.getElementById('asla-devconsole-btn')) return;
 
-    // We append a button to the top right of the Dev Console or floating at the bottom right
-    const btn = document.createElement('button');
-    btn.id = 'asla-devconsole-btn';
-    btn.innerHTML = '🚀 <b>Analyze Selected Log</b>';
-    btn.setAttribute('style', `
+  // We append a button to the top right of the Dev Console or floating at the bottom right
+  const btn = document.createElement('button');
+  btn.id = 'asla-devconsole-btn';
+  btn.innerHTML = '🚀 <b>Analyze Selected Log</b>';
+  btn.setAttribute('style', `
         position: fixed !important;
         bottom: 25px !important;
         right: 25px !important;
@@ -87,71 +87,71 @@ function injectDevConsoleIntegration() {
         display: flex !important;
         align-items: center !important;
     `);
-    
-    btn.addEventListener('mouseenter', () => {
-        btn.style.setProperty('transform', 'translateY(-2px)', 'important');
-        btn.style.setProperty('box-shadow', '0 6px 16px rgba(1, 118, 211, 0.5)', 'important');
-        btn.style.setProperty('background-color', '#014486', 'important');
-    });
-    btn.addEventListener('mouseleave', () => {
-        btn.style.setProperty('transform', 'translateY(0)', 'important');
-        btn.style.setProperty('box-shadow', '0 4px 12px rgba(1, 118, 211, 0.4)', 'important');
-        btn.style.setProperty('background-color', '#0176D3', 'important');
-    });
 
-    btn.addEventListener('click', async () => {
-        // Attempt to find selected log in ExtJS grid
-        const selectedRow = document.querySelector('.x-grid3-row-selected, .x-grid-item-selected, .x-grid-row-selected');
-        let logId = null;
-        
-        if (selectedRow) {
-            const match = selectedRow.textContent.match(/(07L[a-zA-Z0-9]{12,15})/);
-            if (match) logId = match[1];
+  btn.addEventListener('mouseenter', () => {
+    btn.style.setProperty('transform', 'translateY(-2px)', 'important');
+    btn.style.setProperty('box-shadow', '0 6px 16px rgba(1, 118, 211, 0.5)', 'important');
+    btn.style.setProperty('background-color', '#014486', 'important');
+  });
+  btn.addEventListener('mouseleave', () => {
+    btn.style.setProperty('transform', 'translateY(0)', 'important');
+    btn.style.setProperty('box-shadow', '0 4px 12px rgba(1, 118, 211, 0.4)', 'important');
+    btn.style.setProperty('background-color', '#0176D3', 'important');
+  });
+
+  btn.addEventListener('click', async () => {
+    // Attempt to find selected log in ExtJS grid
+    const selectedRow = document.querySelector('.x-grid3-row-selected, .x-grid-item-selected, .x-grid-row-selected');
+    let logId = null;
+
+    if (selectedRow) {
+      const match = selectedRow.textContent.match(/(07L[a-zA-Z0-9]{12,15})/);
+      if (match) logId = match[1];
+    }
+
+    // Fallback: Search the entire DOM for the most recent log ID (07L...)
+    if (!logId) {
+      const allCells = Array.from(document.querySelectorAll('.x-grid3-cell-inner, .x-grid-cell-inner'));
+      for (const cell of allCells) {
+        const match = cell.textContent.match(/(07L[a-zA-Z0-9]{12,15})/);
+        if (match) {
+          logId = match[1];
+          break;
         }
+      }
+    }
 
-        // Fallback: Search the entire DOM for the most recent log ID (07L...)
-        if (!logId) {
-            const allCells = Array.from(document.querySelectorAll('.x-grid3-cell-inner, .x-grid-cell-inner'));
-            for (const cell of allCells) {
-                const match = cell.textContent.match(/(07L[a-zA-Z0-9]{12,15})/);
-                if (match) {
-                    logId = match[1];
-                    break;
-                }
-            }
-        }
+    if (!logId) {
+      alert('Please select a log row in the "Logs" tab first!');
+      return;
+    }
 
-        if (!logId) {
-            alert('Please select a log row in the "Logs" tab first!');
-            return;
-        }
+    const originalHtml = btn.innerHTML;
+    btn.innerHTML = '⏳ <b>Loading Log...</b>';
+    btn.disabled = true;
 
-        const originalHtml = btn.innerHTML;
-        btn.innerHTML = '⏳ <b>Loading Log...</b>';
-        btn.disabled = true;
+    try {
+      const response = await fetch(`/servlet/servlet.FileDownload?file=${logId}`);
+      if (!response.ok) throw new Error('Failed to fetch log');
 
-        try {
-            const response = await fetch(`/servlet/servlet.FileDownload?file=${logId}`);
-            if (!response.ok) throw new Error('Failed to fetch log');
+      const rawLogText = await response.text();
 
-            const rawLogText = await response.text();
+      await chrome.storage.local.set({
+        currentLogId: logId,
+        currentLogText: rawLogText
+      });
 
-            await chrome.storage.local.set({
-                currentLogId: logId,
-                currentLogText: rawLogText
-            });
+      chrome.runtime.sendMessage({ action: 'openAnalyzerTab' });
+    } catch (err) {
+      console.error('Error fetching log:', err);
+      alert('Failed to download log. Check network and session.');
+    } finally {
+      btn.innerHTML = originalHtml;
+      btn.disabled = false;
+    }
+  });
 
-            chrome.runtime.sendMessage({ action: 'openAnalyzerTab' });
-        } catch (err) {
-            console.error('Error fetching log:', err);
-            alert('Failed to download log. Check network and session.');
-        } finally {
-            btn.innerHTML = originalHtml;
-            btn.disabled = false;
-        }
-    });
-
-    document.body.appendChild(btn);
+  document.body.appendChild(btn);
 }
 
 function createAndInjectButton(logId, parentNode, insertBeforeNode, isFloating = false) {
@@ -249,6 +249,7 @@ function createAndInjectButton(logId, parentNode, insertBeforeNode, isFloating =
 setTimeout(injectAnalyzeButtons, 1500);
 
 // Observe DOM for dynamically loaded logs (e.g., in Lightning)
+
 const observer = new MutationObserver((mutations) => {
   let shouldInject = false;
   for (const m of mutations) {
