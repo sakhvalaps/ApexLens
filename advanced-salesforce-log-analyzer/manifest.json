@@ -11,6 +11,8 @@
   "host_permissions": [
     "https://*.salesforce.com/*",
     "https://*.force.com/*",
+    "https://*.lightning.force.com/*",
+    "https://*.visualforce.com/*",
     "https://*.salesforce-setup.com/*"
   ],
   "background": {

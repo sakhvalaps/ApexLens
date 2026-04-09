@@ -108,7 +108,6 @@ class FlowGraph {
           </span>
         </div>
       </div>
-      </div>
       <div id="flow-layout" style="display: flex; gap: 14px; height: 75vh;">
         <div id="d3-canvas" style="flex: 1; border: 1.5px solid var(--border-color); border-radius: 12px; overflow: hidden; background: #fdfdfd; position: relative;">
           <button id="reset-view-btn" style="position: absolute; top: 12px; right: 12px; z-index: 10; display: flex; align-items: center; gap: 6px; background: #fff; border: 1.5px solid var(--border-color); border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.08); font-family: inherit; color: var(--text-main); transition: all 0.2s; font-weight: 500;">
@@ -216,9 +215,16 @@ class FlowGraph {
       }
     }
 
-    if (this.root.children) {
-      this.root.children.forEach(collapse);
-    }
+    // Show root + its direct children expanded; collapse only deeper levels.
+    // This gives users an immediate readable overview without an empty canvas.
+    const collapseDeep = (d, depth) => {
+      if (depth >= 2) {
+        collapse(d);
+      } else if (d.children) {
+        d.children.forEach(c => collapseDeep(c, depth + 1));
+      }
+    };
+    collapseDeep(this.root, 0);
 
     const getEventBadge = (node) => {
       const evt = (node.data.event || '').toUpperCase();
@@ -277,7 +283,11 @@ class FlowGraph {
       const style      = getNodeStyle(d);
       const msRaw      = d.data.durationNs ? d.data.durationNs / 1000000 : (d.data.durationNanos ? d.data.durationNanos / 1000000 : 0);
       const ms         = msRaw.toFixed(2);
-      const pct        = d.data.durationNs && d.data.parent ? ((d.data.durationNs / d.data.parent.data.durationNs) * 100).toFixed(1) : (d.data.durationNanos && d.data.parent ? ((d.data.durationNanos / d.data.parent.data.durationNanos) * 100).toFixed(1) : "0.0");
+      const pct        = d.data.durationNs && d.parent && d.parent.data.durationNs
+        ? ((d.data.durationNs / d.parent.data.durationNs) * 100).toFixed(1)
+        : (d.data.durationNanos && d.parent && d.parent.data.durationNanos
+            ? ((d.data.durationNanos / d.parent.data.durationNanos) * 100).toFixed(1)
+            : "0.0");
       const badge       = getEventBadge(d);
       const displayName = d.data.name || d.data.event || "Unknown";
       const hasChildren = d.children || d._children;
@@ -307,8 +317,8 @@ class FlowGraph {
         .style("width",           "100%")
         .style("height",          "100%")
         .style("background",      cardBg)
-        .style("border",          `2px solid ${cardBorder}`)
-        .style("border-style",    (isMatch || isCurrentMatch) ? "none" : "solid")
+        .style("border",          (isMatch || isCurrentMatch) ? "none" : `1.5px solid ${cardBorder}`)
+        .style("border-left",     (isMatch || isCurrentMatch) ? "none" : `4px solid ${badge.color}`)
         .style("border-radius",   "10px")
         .style("box-shadow",      cardShadow)
         .style("opacity",         cardOpacity)
@@ -460,10 +470,10 @@ class FlowGraph {
           ? d.data.durationNs / 1000000
           : (d.data.durationNanos ? d.data.durationNanos / 1000000 : 0);
         const ms         = msRaw.toFixed(2);
-        const pct        = d.data.durationNs && d.data.parent
-          ? ((d.data.durationNs / d.data.parent.data.durationNs) * 100).toFixed(1)
-          : (d.data.durationNanos && d.data.parent
-              ? ((d.data.durationNanos / d.data.parent.data.durationNanos) * 100).toFixed(1)
+        const pct        = d.data.durationNs && d.parent && d.parent.data.durationNs
+          ? ((d.data.durationNs / d.parent.data.durationNs) * 100).toFixed(1)
+          : (d.data.durationNanos && d.parent && d.parent.data.durationNanos
+              ? ((d.data.durationNanos / d.parent.data.durationNanos) * 100).toFixed(1)
               : "0.0");
         const badge       = getEventBadge(d);
         const displayName = d.data.name || d.data.event || "Unknown";
@@ -497,8 +507,8 @@ class FlowGraph {
           .style("width",           "100%")
           .style("height",          "100%")
           .style("background",      cardBg)
-          .style("border",          `2px solid ${cardBorder}`)
-          .style("border-style",    (isMatch || isCurrentMatch) ? "none" : "solid")   // outline replaces border for match
+          .style("border",          (isMatch || isCurrentMatch) ? "none" : `1.5px solid ${cardBorder}`)
+          .style("border-left",     (isMatch || isCurrentMatch) ? "none" : `4px solid ${badge.color}`)
           .style("border-radius",   "10px")
           .style("box-shadow",      cardShadow)
           .style("opacity",         cardOpacity)
