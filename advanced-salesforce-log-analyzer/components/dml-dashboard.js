@@ -32,10 +32,42 @@ class DMLDashboard {
       dml._parsed = { objName, opName, rows };
     });
 
+    // ── DML-in-loop warning banner ──────────────────────────────────────────
+    const dmlLoops = analysis.dmlInLoops || [];
+    let loopBanner = '';
+    if (dmlLoops.length > 0) {
+      const items = dmlLoops.map(p => `
+        <div style="display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:1px solid #c4b5fd44;">
+          <span style="font-size:18px;flex-shrink:0;">🔁</span>
+          <div>
+            <div style="font-weight:700;font-size:13px;color:#3b0764;margin-bottom:3px;">
+              <code style="background:#ede9fe;padding:1px 6px;border-radius:4px;font-size:12px;">${this.escapeHtml(p.operation)}</code>
+              runs <span style="background:#ddd6fe;padding:1px 6px;border-radius:4px;">${p.occurrences}×</span>
+              inside <code style="background:#ede9fe;padding:1px 6px;border-radius:4px;font-size:12px;">${this.escapeHtml(p.parentMethod)}</code>
+            </div>
+            <div style="font-size:11px;color:#5b21b6;">Lines: ${p.lineNumbers.join(', ')} &nbsp;·&nbsp; Fix: collect records in a List and do a single DML call outside the loop</div>
+          </div>
+        </div>`).join('');
+
+      loopBanner = `
+        <div style="background:#f5f3ff;border:2px solid #7c3aed;border-radius:12px;padding:20px;margin-bottom:28px;">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+            <span style="font-size:22px;">⚡</span>
+            <div>
+              <div style="font-weight:800;font-size:15px;color:#3b0764;">DML Inside Loop Detected (${dmlLoops.length} pattern${dmlLoops.length > 1 ? 's' : ''})</div>
+              <div style="font-size:12px;color:#5b21b6;margin-top:2px;">Each DML call inside a loop burns a governor limit slot — bulkify by collecting records and calling DML once.</div>
+            </div>
+          </div>
+          ${items}
+        </div>`;
+    }
+
     let html = `
       <div style="padding: 24px;">
         <h3 style="margin-top:0; font-size: 1.5rem; color: var(--text-main); margin-bottom: 24px;">DML Operations Dashboard</h3>
-        
+
+        ${loopBanner}
+
         <div class="summary-cards" style="display: flex; gap: 16px; margin-bottom: 32px; flex-wrap: wrap;">
           <div class="card" style="flex:1; min-width: 150px; padding: 20px; background: #fff7ed; border: 1.5px solid #ffedd5; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
             <div style="margin:0 0 8px 0; color: #9a3412; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;">Total DML Statements</div>
@@ -48,6 +80,10 @@ class DMLDashboard {
           <div class="card" style="flex:1; min-width: 150px; padding: 20px; background: #ecfdf5; border: 1.5px solid #d1fae5; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
             <div style="margin:0 0 8px 0; color: #065f46; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;">Total Rows Affected</div>
             <div style="margin:0; font-size: 2rem; font-weight: 800; color: #059669;">${totalRows}</div>
+          </div>
+          <div class="card" style="flex:1; min-width: 150px; padding: 20px; background: ${dmlLoops.length > 0 ? '#f5f3ff' : '#f8fafc'}; border: 1.5px solid ${dmlLoops.length > 0 ? '#7c3aed' : '#e2e8f0'}; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+            <div style="margin:0 0 8px 0; color: ${dmlLoops.length > 0 ? '#3b0764' : '#475569'}; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;">DML in Loops</div>
+            <div style="margin:0; font-size: 2rem; font-weight: 800; color: ${dmlLoops.length > 0 ? '#7c3aed' : '#94a3b8'};">${dmlLoops.length}</div>
           </div>
         </div>
 

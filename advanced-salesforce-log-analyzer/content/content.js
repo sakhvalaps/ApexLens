@@ -175,7 +175,7 @@ async function fetchAndOpenLog(logId, btn, originalHtml) {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const rawLogText = await response.text();
 
-    await chrome.storage.local.set({ currentLogId: logId, currentLogText: rawLogText });
+    await chrome.storage.local.set({ currentLogId: logId, currentLogText: rawLogText, currentOrgUrl: window.location.origin });
     chrome.runtime.sendMessage({ action: 'openAnalyzerTab' });
   } catch (err) {
     console.error('[ApexLens] Error fetching log:', err);
@@ -267,7 +267,7 @@ function createAndInjectButton(logId, parentNode, insertBeforeNode, isFloating =
       const response = await fetch(`/servlet/servlet.FileDownload?file=${logId}`);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const rawLogText = await response.text();
-      await chrome.storage.local.set({ currentLogId: logId, currentLogText: rawLogText });
+      await chrome.storage.local.set({ currentLogId: logId, currentLogText: rawLogText, currentOrgUrl: window.location.origin });
       chrome.runtime.sendMessage({ action: 'openAnalyzerTab' });
     } catch (err) {
       console.error('[ApexLens] Error fetching log:', err);

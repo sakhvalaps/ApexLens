@@ -27,7 +27,8 @@ class TreeBuilder {
         if (stack.length > 1) { // don't pop root
           const node = stack.pop();
           node.exitLog = log;
-          node.durationNanos = log.nanos - node.entryLog.nanos;
+          // Guard: entryLog may be missing for truncated/malformed logs
+          node.durationNanos = node.entryLog ? Math.max(0, log.nanos - node.entryLog.nanos) : 0;
           if (stack.length === 1) {
             root.durationNanos += node.durationNanos;
           }
