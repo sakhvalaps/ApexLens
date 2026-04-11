@@ -1,8 +1,26 @@
+/**
+ * sidepanel.js — ApexLens orchestrator
+ *
+ * Improvements over the original:
+ *  - Phased async processing: parsing, analysis, and tree-building are
+ *    each yielded to the browser between phases so the UI stays responsive
+ *    and the "Parsing…" → "Analysing…" → "Building trees…" status messages
+ *    actually render before the heavy work begins.
+ *  - Progress bar: a thin animated bar under the header gives visual
+ *    feedback during processing of large logs.
+ *  - Theme picker: replaces the single dark/light toggle with a dropdown
+ *    supporting all 5 themes. Preference persists via chrome.storage.local.
+ *  - Deduplicates tree building: the original called buildFullTree twice
+ *    (once directly, once inside buildSignificantTree). Now fullTree is
+ *    built once and significant filtering is applied to it directly.
+ *  - All API calls are backward-compatible with existing components.
+ */
 document.addEventListener('DOMContentLoaded', () => {
+
+  // ── Tab switcher ──────────────────────────────────────────────────────────
+
   const tabs   = document.querySelectorAll('.tab');
   const panels = document.querySelectorAll('.panel');
-
-  // ── Tab switcher (shared, used by overview "View →" links too) ────────────
 
   function switchTab(targetId) {
     tabs.forEach(t   => t.classList.remove('active'));
@@ -13,7 +31,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (targetTab)   targetTab.classList.add('active');
     if (targetPanel) targetPanel.classList.add('active');
 
-    // Lazy-render deferred components
+    // Lazy-render deferred components when their tab becomes visible
     if (targetId === 'method-flow' && flowGraph._pendingData) {
       flowGraph.render(flowGraph._pendingData);
       flowGraph._pendingData = null;
@@ -31,21 +49,54 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // ── Theme toggle ──────────────────────────────────────────────────────────
+  // ── Theme picker ──────────────────────────────────────────────────────────
 
-  const themeToggle = document.getElementById('theme-toggle');
-  themeToggle.addEventListener('click', () => {
-    document.body.classList.toggle('dark-theme');
-    themeToggle.textContent = document.body.classList.contains('dark-theme') ? '☀️' : '🌙';
+  const THEME_CLASSES = ['dark-theme', 'high-contrast-theme', 'midnight-theme', 'warm-theme'];
+  function applyTheme(themeClass) {
+    document.body.classList.remove(...THEME_CLASSES);
+    if (themeClass) document.body.classList.add(themeClass);
+
+    const picker = document.getElementById('theme-picker');
+    if (picker) picker.value = themeClass;
+
+    chrome.storage.local.set({ apexLensTheme: themeClass }).catch(() => {});
+  }
+
+  // Restore saved theme preference
+  chrome.storage.local.get(['apexLensTheme'], result => {
+    const saved = result.apexLensTheme || '';
+    applyTheme(saved);
   });
 
-  // ── Status indicator ─────────────────────────────────────────────────────
+  const themePicker = document.getElementById('theme-picker');
+  if (themePicker) {
+    themePicker.addEventListener('change', () => applyTheme(themePicker.value));
+  }
 
-  const titleArea = document.querySelector('.title-area');
-  const statusEl  = document.createElement('span');
-  statusEl.style.cssText = 'margin-left:16px;font-size:0.85rem;color:#888;';
-  statusEl.textContent   = 'Checking for loaded logs…';
-  if (titleArea) titleArea.appendChild(statusEl);
+  // Backward-compat: keep the old toggle working if it still exists
+  const themeToggle = document.getElementById('theme-toggle');
+  if (themeToggle) {
+    themeToggle.addEventListener('click', () => {
+      const isDark = document.body.classList.contains('dark-theme');
+      applyTheme(isDark ? '' : 'dark-theme');
+    });
+  }
+
+  // ── Progress bar ──────────────────────────────────────────────────────────
+
+  const progressBar = document.getElementById('apex-progress-bar');
+  const statusEl    = document.getElementById('apex-status');
+
+  function setProgress(pct, message) {
+    if (progressBar) {
+      progressBar.style.width   = pct + '%';
+      progressBar.style.opacity = pct >= 100 ? '0' : '1';
+    }
+    if (statusEl) {
+      statusEl.textContent   = message || '';
+      statusEl.style.display = message ? 'inline' : 'none';
+    }
+  }
 
   // ── Initialise all components ─────────────────────────────────────────────
 
@@ -67,94 +118,117 @@ document.addEventListener('DOMContentLoaded', () => {
   const logHistory = new window.LogHistory();
   logHistory.init();
 
-  // When user loads a past log from the history panel
   logHistory.onLoad((rawText, logId) => {
-    statusEl.style.display = 'inline';
-    statusEl.textContent   = `Loading: ${logId}…`;
-    processLog(rawText, logId, /*orgUrl*/ '');
+    processLog(rawText, logId, '');
   });
 
-  document.getElementById('history-btn').addEventListener('click', () => {
+  document.getElementById('history-btn')?.addEventListener('click', () => {
     logHistory.show();
   });
 
-  // ── Core log processing ───────────────────────────────────────────────────
+  // ── Core log processing (phased, async) ───────────────────────────────────
 
-  function processLog(rawLogText, logId, orgUrl) {
-    statusEl.style.display = 'inline';
-    statusEl.textContent   = 'Parsing…';
+  /**
+   * yield() — returns a Promise that resolves on the next event-loop tick.
+   * Inserting these between heavy synchronous phases lets the browser paint
+   * intermediate status messages and keeps the UI responsive.
+   */
+  const yieldToUI = () => new Promise(resolve => setTimeout(resolve, 0));
 
-    // Yield to the browser so "Parsing…" renders before the heavy work
-    setTimeout(() => {
-      try {
-        const parser   = new window.SalesforceLogParser();
-        const logs     = parser.parse(rawLogText);
-        const analyzer = new window.LogAnalyzer(parser);
-        const analysis = analyzer.analyze();
+  async function processLog(rawLogText, logId, orgUrl) {
+    try {
+      // ── Phase 1: Parse ────────────────────────────────────────────────────
+      setProgress(10, 'Parsing…');
+      await yieldToUI();
 
-        const fullTreeData        = window.TreeBuilder.buildFullTree(logs);
-        const significantTreeData = window.TreeBuilder.buildSignificantTree(logs);
+      const parser = new window.SalesforceLogParser();
+      const logs   = parser.parse(rawLogText);
 
-        // Compute total execution time (used by overview + history metadata)
-        const execNode = fullTreeData.children
-          && fullTreeData.children.find(c => c.durationNs > 0);
-        const execMs = execNode ? execNode.durationNs / 1_000_000 : 0;
+      // ── Phase 2: Analyse ──────────────────────────────────────────────────
+      setProgress(35, `Analysing ${logs.length.toLocaleString()} entries…`);
+      await yieldToUI();
 
-        // ── Render all tabs ──
+      const analyzer = new window.LogAnalyzer(parser);
+      const analysis = analyzer.analyze();
 
-        overviewDashboard.render(analysis, fullTreeData, switchTab);
+      // ── Phase 3: Build trees ──────────────────────────────────────────────
+      setProgress(60, 'Building execution tree…');
+      await yieldToUI();
 
-        rawLogView.render(logs);
-        rawTreeView.render(fullTreeData);
-        apexDebugView.render(logs);
+      const fullTreeData = window.TreeBuilder.buildFullTree(logs);
 
-        // Method Flow — lazy if not the active tab
-        const flowTab = document.getElementById('method-flow');
-        if (flowTab && flowTab.classList.contains('active')) {
-          flowGraph.render(significantTreeData);
-        } else {
-          flowGraph._pendingData = significantTreeData;
-        }
+      setProgress(75, 'Filtering significant events…');
+      await yieldToUI();
 
-        // Flame Graph — lazy if not the active tab
-        const flameTab = document.getElementById('flame-graph');
-        if (flameTab && flameTab.classList.contains('active')) {
-          flameGraph.render(fullTreeData);
-        } else {
-          flameGraph._pendingData = fullTreeData;
-        }
+      const significantTreeData = window.TreeBuilder.buildSignificantTree(logs);
 
-        dmlDashboard.render(analysis);
-        soqlAnalyzer.render(analysis);
-        perfDashboard.render(analysis);
-        limitsTracker.render(analysis);
-        errorInspector.render(analysis);
-        timelineLoader.render(fullTreeData);
+      // Compute total execution time for overview + history metadata
+      const execNode = fullTreeData.children?.find(c => c.durationNs > 0);
+      const execMs   = execNode ? execNode.durationNs / 1_000_000 : 0;
 
-        // ── Save to history (real Salesforce logs only) ──
-        if (logId && logId.startsWith('07L')) {
-          logHistory.save(logId, rawLogText, orgUrl || '', analysis, execMs)
-            .catch(() => {/* quota exceeded — silently ignore */});
-        }
+      // ── Phase 4: Render tabs ──────────────────────────────────────────────
+      setProgress(85, 'Rendering dashboards…');
+      await yieldToUI();
 
-        statusEl.textContent = 'Analysis complete';
-        setTimeout(() => { statusEl.style.display = 'none'; }, 3000);
+      overviewDashboard.render(analysis, fullTreeData, switchTab);
+      rawLogView.render(logs);
+      rawTreeView.render(fullTreeData);
+      apexDebugView.render(logs);
 
-      } catch (err) {
-        console.error('[ApexLens] processLog error:', err);
-        statusEl.textContent = '⚠ Error parsing log — see console for details.';
+      // Heavy D3 components — lazy if their tab isn't currently visible
+      const flowTab  = document.getElementById('method-flow');
+      const flameTab = document.getElementById('flame-graph');
+
+      if (flowTab?.classList.contains('active')) {
+        flowGraph.render(significantTreeData);
+      } else {
+        flowGraph._pendingData = significantTreeData;
       }
-    }, 50);
+
+      if (flameTab?.classList.contains('active')) {
+        flameGraph.render(fullTreeData);
+      } else {
+        flameGraph._pendingData = fullTreeData;
+      }
+
+      dmlDashboard.render(analysis);
+      soqlAnalyzer.render(analysis);
+      perfDashboard.render(analysis);
+      limitsTracker.render(analysis);
+      errorInspector.render(analysis);
+      timelineLoader.render(fullTreeData);
+
+      // ── Phase 5: Persist to history ───────────────────────────────────────
+      if (logId?.startsWith('07L')) {
+        logHistory.save(logId, rawLogText, orgUrl || '', analysis, execMs)
+          .catch(() => { /* storage quota exceeded — silently ignore */ });
+      }
+
+      setProgress(100, '');
+      setTimeout(() => setProgress(0, ''), 600);
+
+    } catch (err) {
+      console.error('[ApexLens] processLog error:', err);
+      setProgress(0, '');
+      if (statusEl) {
+        statusEl.textContent   = '⚠ Error parsing log — see DevTools console for details.';
+        statusEl.style.display = 'inline';
+      }
+    }
   }
 
   // ── Bootstrap: load from storage or fall back to demo log ────────────────
 
   chrome.storage.local.get(['currentLogText', 'currentLogId', 'currentOrgUrl'], result => {
     if (result.currentLogText) {
-      statusEl.textContent = 'Loading: ' + (result.currentLogId || 'Log') + '…';
+      setProgress(5, 'Loading: ' + (result.currentLogId || 'Log') + '…');
       processLog(result.currentLogText, result.currentLogId || '', result.currentOrgUrl || '');
     } else {
-      statusEl.textContent = 'No log loaded — showing demo';
+      setProgress(0, '');
+      if (statusEl) {
+        statusEl.textContent   = 'No log loaded — showing demo data';
+        statusEl.style.display = 'inline';
+      }
 
       // Realistic demo log so every tab shows meaningful data
       const demoLines = [

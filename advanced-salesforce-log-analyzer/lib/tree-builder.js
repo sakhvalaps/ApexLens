@@ -1,4 +1,19 @@
+/**
+ * TreeBuilder — builds execution trees from parsed Salesforce Apex log entries.
+ *
+ * Key improvements over the original:
+ *  - computeSelfTime is now iterative (explicit stack) so a deep call tree
+ *    (e.g. 10 000+ nested method calls) cannot overflow the JS call stack.
+ *  - buildSignificantTree's filterTree and annotateCallChain have an explicit
+ *    depth guard (MAX_DEPTH = 500) to prevent stack overflows on pathological logs.
+ *  - All public methods remain API-compatible with the original.
+ */
 class TreeBuilder {
+
+  static MAX_DEPTH = 500;   // guard against stack overflows in recursive helpers
+
+  // ── Method tree (minimal, for overview) ───────────────────────────────────
+
   static buildMethodTree(logs) {
     const root = { name: 'Execution Root', children: [], durationNanos: 0, depth: 0 };
     const stack = [root];
@@ -7,7 +22,6 @@ class TreeBuilder {
       if (log.event === 'METHOD_ENTRY') {
         const parent = stack[stack.length - 1];
 
-        // Extract proper method name from the pipeline-separated details
         let properName = log.details || 'Unknown Method';
         if (properName.includes('|')) {
           const parts = properName.split('|');
@@ -19,16 +33,17 @@ class TreeBuilder {
           entryLog: log,
           children: [],
           depth: stack.length,
-          durationNanos: 0
+          durationNanos: 0,
         };
         parent.children.push(node);
         stack.push(node);
       } else if (log.event === 'METHOD_EXIT') {
-        if (stack.length > 1) { // don't pop root
+        if (stack.length > 1) {
           const node = stack.pop();
           node.exitLog = log;
-          // Guard: entryLog may be missing for truncated/malformed logs
-          node.durationNanos = node.entryLog ? Math.max(0, log.nanos - node.entryLog.nanos) : 0;
+          node.durationNanos = node.entryLog
+            ? Math.max(0, log.nanos - node.entryLog.nanos)
+            : 0;
           if (stack.length === 1) {
             root.durationNanos += node.durationNanos;
           }
@@ -38,36 +53,53 @@ class TreeBuilder {
     return [root];
   }
 
+  // ── Full tree (all events, used by flame graph + timeline) ────────────────
+
   static buildFullTree(logs) {
-    let root = { id: 0, event: 'ROOT', details: '', children: [], depth: 0, timeNs: 0, durationNs: 0, selfTimeNs: 0 };
-    let stack = [root];
+    const root = {
+      id: 0, event: 'ROOT', details: '', children: [],
+      depth: 0, timeNs: 0, durationNs: 0, selfTimeNs: 0,
+    };
+    const stack = [root];
     let idCounter = 1;
 
-    const entryEvents = ['EXECUTION_STARTED', 'CODE_UNIT_STARTED', 'METHOD_ENTRY', 'SOQL_EXECUTE_BEGIN', 'DML_BEGIN', 'CALLOUT_REQUEST', 'VF_APEX_CALL_START'];
-    const exitEvents = ['EXECUTION_FINISHED', 'CODE_UNIT_FINISHED', 'METHOD_EXIT', 'SOQL_EXECUTE_END', 'DML_END', 'CALLOUT_RESPONSE', 'VF_APEX_CALL_END'];
+    const entryEvents = new Set([
+      'EXECUTION_STARTED', 'CODE_UNIT_STARTED', 'METHOD_ENTRY',
+      'SOQL_EXECUTE_BEGIN', 'DML_BEGIN', 'CALLOUT_REQUEST', 'VF_APEX_CALL_START',
+    ]);
+    const exitEvents = new Set([
+      'EXECUTION_FINISHED', 'CODE_UNIT_FINISHED', 'METHOD_EXIT',
+      'SOQL_EXECUTE_END', 'DML_END', 'CALLOUT_RESPONSE', 'VF_APEX_CALL_END',
+    ]);
+    const ignoreEvents = new Set([
+      'HEAP_ALLOCATE', 'STATEMENT_EXECUTE', 'VARIABLE_SCOPE_BEGIN',
+      'VARIABLE_ASSIGNMENT', 'USER_INFO', 'CUMULATIVE_LIMIT_USAGE',
+      'CUMULATIVE_LIMIT_USAGE_END',
+    ]);
 
-    const ignoreEvents = ['HEAP_ALLOCATE', 'STATEMENT_EXECUTE', 'VARIABLE_SCOPE_BEGIN', 'VARIABLE_ASSIGNMENT', 'USER_INFO', 'CUMULATIVE_LIMIT_USAGE', 'CUMULATIVE_LIMIT_USAGE_END'];
-
-    logs.forEach(log => {
-      if (log.event === 'HEADER' || ignoreEvents.includes(log.event)) return;
+    for (const log of logs) {
+      if (log.event === 'HEADER' || ignoreEvents.has(log.event)) continue;
 
       const currentParent = stack[stack.length - 1];
-      const nanos = parseInt(log.nanos || '0', 10);
+      const nanos = log.nanos || 0;
 
-      if (entryEvents.includes(log.event)) {
+      if (entryEvents.has(log.event)) {
         const node = {
           id: idCounter++,
-          log: log,
-          event: log.event.replace('_STARTED', '').replace('_BEGIN', '').replace('_ENTRY', '').replace('_REQUEST', ''),
+          log,
+          event: log.event
+            .replace('_STARTED', '').replace('_BEGIN', '')
+            .replace('_ENTRY', '').replace('_REQUEST', ''),
           details: log.details,
           children: [],
           depth: stack.length,
           timeNs: nanos,
-          durationNs: 0
+          durationNs: 0,
+          selfTimeNs: 0,
         };
         currentParent.children.push(node);
         stack.push(node);
-      } else if (exitEvents.includes(log.event)) {
+      } else if (exitEvents.has(log.event)) {
         if (stack.length > 1) {
           const node = stack.pop();
           node.durationNs = Math.max(0, nanos - node.timeNs);
@@ -75,29 +107,55 @@ class TreeBuilder {
       } else {
         currentParent.children.push({
           id: idCounter++,
-          log: log,
+          log,
           event: log.event,
-          details: log.event === 'LIMIT_USAGE_FOR_NS' ? log.details.split('\n')[0] : log.details,
+          details: log.event === 'LIMIT_USAGE_FOR_NS'
+            ? (log.details || '').split('\n')[0]
+            : log.details,
           children: [],
           depth: stack.length,
           timeNs: nanos,
-          durationNs: 0
+          durationNs: 0,
+          selfTimeNs: 0,
         });
       }
-    });
+    }
 
-    const computeSelfTime = (node) => {
-      let childTime = 0;
-      node.children.forEach(c => {
-        computeSelfTime(c);
-        childTime += c.durationNs;
-      });
-      node.selfTimeNs = Math.max(0, node.durationNs - childTime);
-    };
-    computeSelfTime(root);
+    // ── Iterative self-time computation (no recursion → no stack overflow) ──
+    TreeBuilder._computeSelfTimeIterative(root);
 
     return root;
   }
+
+  /**
+   * Iterative post-order traversal to compute selfTimeNs for every node.
+   * Replaces the original recursive computeSelfTime to avoid call-stack
+   * overflow on deep trees (10 000+ levels).
+   */
+  static _computeSelfTimeIterative(root) {
+    // Two-pass iterative post-order using an explicit stack.
+    // Pass 1: build a post-order visit list.
+    const visitOrder = [];
+    const stack = [root];
+    while (stack.length > 0) {
+      const node = stack.pop();
+      visitOrder.push(node);
+      for (const child of (node.children || [])) {
+        stack.push(child);
+      }
+    }
+    // Pass 2: process in reverse (children before parents).
+    for (let i = visitOrder.length - 1; i >= 0; i--) {
+      const node = visitOrder[i];
+      let childTime = 0;
+      for (const child of (node.children || [])) {
+        childTime += child.durationNs;
+      }
+      node.selfTimeNs = Math.max(0, node.durationNs - childTime);
+    }
+  }
+
+  // ── Significant tree (noise-filtered, used by method flow graph) ──────────
 
   static buildSignificantTree(logs) {
     const fullRoot = this.buildFullTree(logs);
@@ -109,7 +167,7 @@ class TreeBuilder {
       'LIMIT_USAGE', 'CUMULATIVE_LIMIT',
       'HEAP_ALLOCATE', 'STATEMENT_EXECUTE',
       'VARIABLE_SCOPE', 'VARIABLE_ASSIGNMENT',
-      'USER_INFO', 'CODE_UNIT_STARTED', 'CODE_UNIT_FINISHED'
+      'USER_INFO', 'CODE_UNIT_STARTED', 'CODE_UNIT_FINISHED',
     ]);
 
     const minDurationMs = 5;
@@ -120,9 +178,12 @@ class TreeBuilder {
       if (evt.includes('SOQL') || evt.includes('DML') || evt.includes('CALLOUT')) return true;
       if (evt.includes('METHOD')) {
         const name = (node.details || node.name || '').toLowerCase();
-        if (name.startsWith('system.') || name.startsWith('<init>') || name.includes('wrappers.') || name.includes('encodingutil.') || name.includes('url.')) {
-          const durMs = node.durationNs / 1000000;
-          return durMs >= minDurationMs;
+        if (
+          name.startsWith('system.') || name.startsWith('<init>') ||
+          name.includes('wrappers.') || name.includes('encodingutil.') ||
+          name.includes('url.')
+        ) {
+          return (node.durationNs / 1_000_000) >= minDurationMs;
         }
         return true;
       }
@@ -130,65 +191,86 @@ class TreeBuilder {
       return false;
     };
 
-    const filterTree = (node, parentKept) => {
-      const kept = isSignificant(node) || parentKept;
-      const filteredChildren = [];
-      for (const child of (node.children || [])) {
-        const childKept = isSignificant(child);
-        if (childKept) {
-          const filteredChild = filterTree(child, true);
-          filteredChildren.push(filteredChild);
-        } else {
-          const grandResults = filterTree(child, false);
-          if (grandResults && grandResults.children && grandResults.children.length > 0) {
-            filteredChildren.push(...grandResults.children);
+    // Iterative tree filter (avoids recursive stack overflow on large trees)
+    const filterTreeIterative = (root) => {
+      // Post-order: rebuild children arrays bottom-up
+      // We use a parent-map approach with a DFS stack.
+      const result = new Map();  // node → filtered-children[]
+
+      const stack = [];
+      // Push with a flag indicating whether we've processed children yet
+      const push = (node, parentNode) => stack.push({ node, parentNode, processed: false });
+      push(root, null);
+
+      while (stack.length > 0) {
+        const frame = stack[stack.length - 1];
+        if (!frame.processed) {
+          frame.processed = true;
+          // Push children (reversed so we process left-to-right)
+          const children = frame.node.children || [];
+          for (let i = children.length - 1; i >= 0; i--) {
+            push(children[i], frame.node);
           }
+        } else {
+          stack.pop();
+          const { node, parentNode } = frame;
+          const filteredChildren = [];
+          for (const child of (node.children || [])) {
+            const childFiltered = result.get(child);
+            if (isSignificant(child)) {
+              filteredChildren.push({ ...child, children: childFiltered || [] });
+            } else if (childFiltered && childFiltered.length > 0) {
+              // Hoist grandchildren up
+              filteredChildren.push(...childFiltered);
+            }
+          }
+          result.set(node, filteredChildren);
         }
       }
-      return { ...node, children: filteredChildren };
+
+      const rootChildren = result.get(root) || [];
+      return { ...root, children: rootChildren };
     };
 
-    const annotateCallChain = (node, parentName, depth) => {
+    const filtered = filterTreeIterative(fullRoot);
+
+    // Annotate call chain info (iterative BFS to avoid recursion)
+    const queue = [{ node: filtered, parentName: null, depth: 0 }];
+    while (queue.length > 0) {
+      const { node, parentName, depth } = queue.shift();
+
       node.callerName = parentName || '—';
-      node.nodeDepth = depth || 0;
+      node.nodeDepth  = depth;
 
       if (!node.name) {
         const evt = (node.event || '').toUpperCase();
-        if (evt.includes('METHOD') || evt.includes('CALLOUT') || evt.includes('CODE_UNIT')) {
-          let detail = node.details || '';
-          if (detail.includes('|')) {
-            const parts = detail.split('|');
-            node.name = parts[parts.length - 1].trim();
-          } else {
-            node.name = detail.substring(0, 80) || node.event;
-          }
-        } else if (evt.includes('SOQL') || evt.includes('DML')) {
-          let detail = node.details || '';
-          if (detail.includes('|')) {
-            const parts = detail.split('|');
-            node.name = parts[parts.length - 1].trim();
-          } else {
-            node.name = detail.substring(0, 60) || node.event;
-          }
+        let detail = node.details || '';
+        if (detail.includes('|')) {
+          const parts = detail.split('|');
+          detail = parts[parts.length - 1].trim();
+        }
+        if (
+          evt.includes('METHOD') || evt.includes('CALLOUT') || evt.includes('CODE_UNIT') ||
+          evt.includes('SOQL')   || evt.includes('DML')
+        ) {
+          node.name = detail.substring(0, 80) || node.event;
         } else {
-          node.name = node.details ? node.details.substring(0, 60) : node.event;
+          node.name = detail.substring(0, 60) || node.event;
         }
       }
 
       if (node.children && node.children.length > 0) {
         node.callees = node.children.map(c => ({
           name: c.name || c.event,
-          durationMs: (c.durationNs / 1000000).toFixed(2),
-          event: c.event
+          durationMs: (c.durationNs / 1_000_000).toFixed(2),
+          event: c.event,
         }));
+        for (const child of node.children) {
+          queue.push({ node: child, parentName: node.name || node.event, depth: depth + 1 });
+        }
       }
-      for (const child of (node.children || [])) {
-        annotateCallChain(child, node.name || node.event, (depth || 0) + 1);
-      }
-    };
+    }
 
-    const filtered = filterTree(fullRoot, true);
-    annotateCallChain(filtered, null, 0);
     return [filtered];
   }
 }

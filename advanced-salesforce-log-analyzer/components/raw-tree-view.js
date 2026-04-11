@@ -22,7 +22,7 @@ class RawTreeView {
         html += '</div>';
 
         html += '<div style="position: relative; height: 75vh;">';
-        html += '<div id="raw-tree-wrapper" style="background: #ffffff; overflow: auto; height: 100%; font-family: \'Consolas\', \'Monaco\', monospace; font-size: 13px; line-height: 1.5; padding-bottom: 20px;"></div>';
+        html += '<div id="raw-tree-wrapper" style="background: var(--bg-code); overflow: auto; height: 100%; font-family: var(--font-mono); font-size: var(--font-size-sm); line-height: 1.5; padding-bottom: 20px; color: var(--text-primary);"></div>';
         html += '<canvas id="tree-minimap" width="12" height="2000" style="position: absolute; right: 0; top: 0; width: 12px; height: 100%; border-left: 1px solid var(--border-color); background: rgba(0,0,0,0.02); pointer-events: none; z-index: 10;"></canvas>';
         html += '</div>';
 
@@ -158,15 +158,15 @@ class RawTreeView {
                 gutter.style.flexShrink = '0';
                 gutter.style.textAlign = 'right';
                 gutter.style.paddingRight = '8px';
-                gutter.style.color = '#888';
-                gutter.style.background = '#f8f9fa';
-                gutter.style.borderRight = '1px solid #ddd';
+                gutter.style.color = 'var(--text-disabled)';
+                gutter.style.background = 'var(--bg-gutter)';
+                gutter.style.borderRight = '1px solid var(--border-gutter)';
                 gutter.style.userSelect = 'none';
                 gutter.style.marginRight = '8px';
 
                 let targetLineNumber = node.log ? node.log.lineNumber : 0;
 
-                gutter.innerHTML = `<a href="#" class="tree-jump-link" data-targetline="${targetLineNumber}" title="Jump to Line ${targetLineNumber} in Log Explorer" style="color: #0176d3; text-decoration:none; font-weight:bold;">${i + 1}</a>`;
+                gutter.innerHTML = `<a href="#" class="tree-jump-link" data-targetline="${targetLineNumber}" title="Jump to Line ${targetLineNumber} in Log Explorer" style="color:var(--text-link);text-decoration:none;font-weight:bold;">${i + 1}</a>`;
                 rowDiv.appendChild(gutter);
 
                 // Background percentage bar - removed per user request for simpler text blocks
@@ -178,28 +178,28 @@ class RawTreeView {
                 contentDiv.style.zIndex = '1';
                 contentDiv.style.paddingLeft = '4px';
 
-                let prefixSpan = `<span style="color:#aaa; font-family: monospace;">${row.prefix}${hasChildren ? '<span class="collapse-indicator" style="font-weight:bold;color:#111;">-</span> ' : (row.isLast ? '└── ' : '├── ')}</span>`;
+                let prefixSpan = `<span style="color:var(--text-disabled);font-family:var(--font-mono);">${row.prefix}${hasChildren ? '<span class="collapse-indicator" style="font-weight:bold;color:var(--text-primary);">-</span> ' : (row.isLast ? '└── ' : '├── ')}</span>`;
 
-                let eventColor = '#333';
-                if (node.event === 'ROOT') eventColor = '#333';
-                else if (node.event.includes('EXCEPTION') || node.event.includes('ERROR') || node.event.includes('FATAL')) eventColor = '#e53e3e';
-                else if (node.event.includes('SOQL')) eventColor = '#a1260d';
-                else if (node.event.includes('DML')) eventColor = '#805ad5';
-                else if (node.event.includes('LIMIT')) eventColor = '#dd6b20';
-                else if (node.event.includes('CODE_UNIT') || node.event.includes('EXECUTION') || node.event.includes('METHOD')) eventColor = '#005fb2'; // blue 
+                let eventColor = 'var(--text-secondary)';
+                if (node.event === 'ROOT') eventColor = 'var(--text-secondary)';
+                else if (node.event.includes('EXCEPTION') || node.event.includes('ERROR') || node.event.includes('FATAL')) eventColor = 'var(--status-error)';
+                else if (node.event.includes('SOQL')) eventColor = 'var(--event-soql)';
+                else if (node.event.includes('DML')) eventColor = 'var(--event-dml)';
+                else if (node.event.includes('LIMIT')) eventColor = 'var(--event-limit)';
+                else if (node.event.includes('CODE_UNIT') || node.event.includes('EXECUTION') || node.event.includes('METHOD')) eventColor = 'var(--syntax-event)';
 
-                let cleanDetails = node.details.replace(/^[|]+/, ''); // strip leading pipe marks 
-                let detailsInfo = cleanDetails ? ` <span style="color: #444;">${this.escapeHtml(cleanDetails)}</span>` : '';
+                let cleanDetails = node.details.replace(/^[|]+/, ''); // strip leading pipe marks
+                let detailsInfo = cleanDetails ? ` <span style="color:var(--text-secondary);">${this.escapeHtml(cleanDetails)}</span>` : '';
 
-                let nodeInfo = `<span style="color: ${eventColor}; font-weight: 600;">${node.event}</span><span style="color: #888;">(${String(node.id).padStart(5, '0')})</span>`;
+                let nodeInfo = `<span style="color:${eventColor};font-weight:var(--font-weight-semibold);">${node.event}</span><span style="color:var(--text-muted);">(${String(node.id).padStart(5, '0')})</span>`;
 
                 let durationInfo = '';
                 if (node.durationNs > 0) {
-                    let blocksCount = Math.min(20, Math.round(pct / 5)); // up to 20 blocks
+                    let blocksCount = Math.min(20, Math.round(pct / 5));
                     let blocks = '█'.repeat(blocksCount);
-                    let blockColor = pct > 80 ? '#e53e3e' : pct > 50 ? '#dd6b20' : '#4299e1';
+                    let blockColor = pct > 80 ? 'var(--status-error)' : pct > 50 ? 'var(--event-limit)' : 'var(--event-soql)';
 
-                    durationInfo = ` <span style="color: #666; font-weight:500;">[${ms}ms | <span style="font-weight:bold; color:#0176D3;">${pct}%</span>]</span> <span style="color:${blockColor}; font-size:10px; letter-spacing:-1px; vertical-align: middle;">${blocks}</span>`;
+                    durationInfo = ` <span style="color:var(--text-muted);font-weight:var(--font-weight-medium);">[${ms}ms | <span style="font-weight:bold;color:var(--brand-primary);">${pct}%</span>]</span> <span style="color:${blockColor};font-size:10px;letter-spacing:-1px;vertical-align:middle;">${blocks}</span>`;
                 }
 
                 contentDiv.innerHTML = prefixSpan + nodeInfo + detailsInfo + durationInfo;
@@ -271,7 +271,7 @@ class RawTreeView {
                             scrollContainer.querySelectorAll('.tree-row').forEach(row => {
                                 // Avoid matching the gutter HTML text if possible
                                 if (row.textContent.toLowerCase().includes(term)) {
-                                    row.style.backgroundColor = '#fff7cd'; // pale yellow for all matches
+                                    row.style.backgroundColor = 'var(--syntax-search-match)'; // pale yellow for all matches
                                     searchMatches.push(row);
                                 }
                             });
@@ -315,14 +315,14 @@ class RawTreeView {
 
                         // Reset colors to inactive match color
                         searchMatches.forEach(el => {
-                            el.style.backgroundColor = '#fff7cd'; // Pale yellow for all background matches
+                            el.style.backgroundColor = 'var(--syntax-search-match)';
                             el.style.outline = 'none';
                         });
 
-                        // Active Match Highlight styling (strong vibrant orange-yellow with thick border)
-                        targetRow.style.backgroundColor = '#fbd38d'; // vibrant orange-yellow
-                        targetRow.style.outline = '2px solid #dd6b20'; // solid orange border
-                        targetRow.style.outlineOffset = '-2px'; // inset the outline so it doesn't push layout
+                        // Active Match Highlight
+                        targetRow.style.backgroundColor = 'var(--syntax-search-active)';
+                        targetRow.style.outline = '2px solid var(--syntax-search-border)';
+                        targetRow.style.outlineOffset = '-2px';
 
                         // Expanding collapsed parent logic
                         let p = targetRow.previousElementSibling;

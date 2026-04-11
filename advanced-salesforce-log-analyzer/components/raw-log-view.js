@@ -1,320 +1,422 @@
+/**
+ * RawLogView — Log Explorer tab with virtual scrolling.
+ *
+ * Key improvements over the original:
+ *  - Virtual scroll: only the rows visible in the viewport (+ an overscan
+ *    buffer) are in the DOM at any time. For a 100 000-line log this means
+ *    ~60 DOM nodes instead of 100 000 — the tab opens instantly.
+ *  - All colours reference CSS variables from common.css / themes.css so the
+ *    component respects whichever theme is active (no more hard-coded hex).
+ *  - Event listeners are re-registered on every render call so there are no
+ *    stale-closure leaks.
+ *  - Export still works — it serialises the raw text array rather than cloning
+ *    partial DOM.
+ *  - Minimap is redrawn only when the filter or search changes, not on every
+ *    scroll frame.
+ */
 class RawLogView {
-    constructor(containerId) {
-        this.container = document.getElementById(containerId);
-    }
+  static ROW_H    = 22;   // px — fixed row height for virtual scroll maths
+  static OVERSCAN = 30;   // extra rows rendered above and below the viewport
 
-    highlightApex(text) {
-        if (!text) return '';
-        let html = this.escapeHtml(text);
+  constructor(containerId) {
+    this.container = document.getElementById(containerId);
+    this._logs            = [];        // all parsed log entries
+    this._filteredIndices = [];        // indices into _logs for the current filter
+    this._searchMatches   = [];        // indices into _filteredIndices that match the search
+    this._searchActive    = -1;        // which match is highlighted
+    this._activeFilter    = 'ALL';
+    this._searchTerm      = '';
+    this._rafPending      = false;     // rAF dedup flag for scroll handler
+  }
 
-        // Keywords
-        html = html.replace(/\b(public|private|protected|static|void|class|if|else|for|while|return|new|List|Set|Map|String|Integer|Boolean|Id|SObject|system\.debug)\b/gi, '<span style="color: #0000ff; font-weight: 500;">$1</span>');
+  // ── Public entry point ────────────────────────────────────────────────────
 
-        // SOQL inside apex
-        html = html.replace(/\b(SELECT|FROM|WHERE|LIMIT|AND|OR)\b/gi, '<span style="color: #a1260d; font-weight: bold;">$1</span>');
+  render(logs) {
+    if (!this.container) return;
+    this._logs = logs || [];
+    this._filteredIndices = this._logs.map((_, i) => i); // start = show all
+    this._activeFilter    = 'ALL';
+    this._searchTerm      = '';
+    this._searchMatches   = [];
+    this._searchActive    = -1;
 
-        // Classes/Types inside brackets (escaped as &lt; &gt;)
-        html = html.replace(/&lt;([a-zA-Z0-9_]+)&gt;/g, '&lt;<span style="color: #2b91af;">$1</span>&gt;');
+    this._buildSkeleton();
+    this._applyFilter();
+  }
 
-        // Strings 'something'
-        html = html.replace(/'([^']*)'/g, '<span style="color: #a31515;">\'$1\'</span>');
+  // ── DOM skeleton (built once per render call) ─────────────────────────────
 
-        // Strings "something" (escaped as &quot;)
-        html = html.replace(/&quot;([^&]*)&quot;/g, '<span style="color: #a31515;">&quot;$1&quot;</span>');
+  _buildSkeleton() {
+    this.container.innerHTML = `
+      <style>
+        #raw-log-outer::-webkit-scrollbar { width: 8px; }
+        #raw-log-outer::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+        #raw-log-outer::-webkit-scrollbar-track { background: transparent; }
+        .rl-row {
+          display: flex;
+          white-space: nowrap;
+          height: ${RawLogView.ROW_H}px;
+          line-height: ${RawLogView.ROW_H}px;
+          font-family: var(--font-mono);
+          font-size: var(--font-size-sm);
+          color: var(--text-primary);
+          border-bottom: 1px solid var(--border-subtle);
+          overflow: hidden;
+        }
+        .rl-row:hover { background: var(--bg-sunken); }
+        .rl-row.rl-search-match  { background: var(--syntax-search-match)  !important; }
+        .rl-row.rl-search-active { background: var(--syntax-search-active) !important;
+          outline: 2px solid var(--syntax-search-border); outline-offset: -2px; }
+        .rl-gutter {
+          width: 52px; flex-shrink: 0;
+          text-align: right; padding-right: 8px;
+          color: var(--text-disabled);
+          background: var(--bg-gutter);
+          border-right: 1px solid var(--border-gutter);
+          margin-right: 8px;
+          user-select: none;
+          font-size: var(--font-size-xs);
+        }
+        .rl-cell { padding: 0 4px; flex: 1; overflow: hidden; text-overflow: ellipsis; }
+        .chip-active { background: var(--brand-primary) !important; color: var(--brand-primary-text) !important; border-color: var(--brand-primary) !important; }
+      </style>
 
-        // Replace the prefix distinctly
-        html = html.replace('Execute Anonymous:', '<span style="color: #888;">Execute Anonymous:</span>');
-        return html;
-    }
+      <!-- Controls bar -->
+      <div style="margin-bottom:10px;display:flex;flex-direction:column;gap:8px;">
 
-    render(logs) {
-        if (!this.container) return;
+        <!-- Filter chips -->
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <button class="rl-chip chip-active" data-filter="ALL"
+            style="padding:5px 12px;border:1px solid var(--border-default);border-radius:var(--radius-full);background:transparent;color:var(--text-primary);cursor:pointer;font-size:var(--font-size-xs);font-weight:var(--font-weight-bold);transition:all 0.15s;white-space:nowrap;">
+            All Events
+          </button>
+          <button class="rl-chip" data-filter="ERROR,EXCEPTION,FATAL"
+            style="padding:5px 12px;border:1px solid var(--border-default);border-radius:var(--radius-full);background:transparent;color:var(--text-primary);cursor:pointer;font-size:var(--font-size-xs);font-weight:var(--font-weight-bold);transition:all 0.15s;white-space:nowrap;">
+            Errors
+          </button>
+          <button class="rl-chip" data-filter="SOQL"
+            style="padding:5px 12px;border:1px solid var(--border-default);border-radius:var(--radius-full);background:transparent;color:var(--text-primary);cursor:pointer;font-size:var(--font-size-xs);font-weight:var(--font-weight-bold);transition:all 0.15s;white-space:nowrap;">
+            SOQL
+          </button>
+          <button class="rl-chip" data-filter="DML"
+            style="padding:5px 12px;border:1px solid var(--border-default);border-radius:var(--radius-full);background:transparent;color:var(--text-primary);cursor:pointer;font-size:var(--font-size-xs);font-weight:var(--font-weight-bold);transition:all 0.15s;white-space:nowrap;">
+            DML
+          </button>
+          <button class="rl-chip" data-filter="CALLOUT"
+            style="padding:5px 12px;border:1px solid var(--border-default);border-radius:var(--radius-full);background:transparent;color:var(--text-primary);cursor:pointer;font-size:var(--font-size-xs);font-weight:var(--font-weight-bold);transition:all 0.15s;white-space:nowrap;">
+            Callouts
+          </button>
+          <button class="rl-chip" data-filter="USER_DEBUG"
+            style="padding:5px 12px;border:1px solid var(--border-default);border-radius:var(--radius-full);background:transparent;color:var(--text-primary);cursor:pointer;font-size:var(--font-size-xs);font-weight:var(--font-weight-bold);transition:all 0.15s;white-space:nowrap;">
+            Debug
+          </button>
+          <div style="flex:1;"></div>
+          <button id="rl-export-btn"
+            style="padding:5px 12px;border:1px solid var(--status-success-border);border-radius:var(--radius-full);background:transparent;color:var(--status-success);cursor:pointer;font-size:var(--font-size-xs);font-weight:var(--font-weight-bold);white-space:nowrap;">
+            Export HTML
+          </button>
+        </div>
 
-        const chipStyle = "padding: 6px 14px; border: 1px solid var(--border-color); border-radius: 16px; background: transparent; color: var(--text-main); cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.2s; white-space: nowrap;";
-        const activeStyle = "background: #0176d3; color: #fff; border-color: #0176d3;";
-
-        let html = `
-    <style>
-      .log-line.search-match { background-color: #fff7cd !important; }
-      .log-line.search-active { background-color: #fbd38d !important; outline: 2px solid #dd6b20 !important; outline-offset: -2px; }
-      .log-line.search-match .apex-code-block, .log-line.search-active .apex-code-block { background-color: transparent !important; }
-    </style>
-    <div class="raw-log-controls" style="margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px;">
-      <div id="log-filters" style="display: flex; gap: 8px; flex-wrap: wrap; padding-bottom: 4px;">
-        <button class="filter-chip active" data-filter="ALL" style="${chipStyle} ${activeStyle}">All Events</button>
-        <button class="filter-chip" data-filter="ERROR,EXCEPTION,FATAL" style="${chipStyle}">Errors</button>
-        <button class="filter-chip" data-filter="SOQL" style="${chipStyle}">SOQL</button>
-        <button class="filter-chip" data-filter="DML" style="${chipStyle}">DML</button>
-        <button class="filter-chip" data-filter="CALLOUT" style="${chipStyle}">Callouts</button>
-        <button class="filter-chip" data-filter="USER_DEBUG" style="${chipStyle}">Debug</button>
-        <div style="flex: 1;"></div>
-        <button id="btn-export-log" style="${chipStyle} border-color:#22c55e; color:#16a34a;">📥 Export Visible HTML</button>
+        <!-- Search bar -->
+        <div style="display:flex;gap:6px;align-items:center;">
+          <input id="rl-search" type="text" placeholder="Find in logs…"
+            style="flex:1;padding:7px 10px;border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--bg-surface);color:var(--text-primary);font-size:var(--font-size-base);outline:none;"/>
+          <span id="rl-match-count"
+            style="min-width:56px;text-align:center;font-size:var(--font-size-sm);color:var(--text-muted);">0/0</span>
+          <button id="rl-prev"
+            style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--bg-surface);color:var(--text-primary);cursor:pointer;font-size:15px;font-weight:bold;padding:0;">↑</button>
+          <button id="rl-next"
+            style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--bg-surface);color:var(--text-primary);cursor:pointer;font-size:15px;font-weight:bold;padding:0;">↓</button>
+        </div>
       </div>
-      <div style="display: flex; gap: 8px; width: 100%; align-items: center;">
-          <input type="text" id="raw-log-search" placeholder="Find in logs..." style="padding: 8px; flex: 1; border: 1px solid var(--border-color); border-radius: 4px;"/>
-          <span id="log-search-matches" style="padding: 8px; color: #666; font-size: 13px; min-width: 60px; text-align: center;">0/0</span>
-          <button id="log-search-prev" style="padding: 6px 12px; border: 1px solid var(--border-color); border-radius: 4px; background: transparent; color: var(--text-main); cursor: pointer; font-size: 15px; font-weight: bold; transition: background 0.2s; min-width: 32px; display:flex; justify-content:center; align-items:center;">↑</button>
-          <button id="log-search-next" style="padding: 6px 12px; border: 1px solid var(--border-color); border-radius: 4px; background: transparent; color: var(--text-main); cursor: pointer; font-size: 15px; font-weight: bold; transition: background 0.2s; min-width: 32px; display:flex; justify-content:center; align-items:center;">↓</button>
+
+      <!-- Virtual scroll area + minimap -->
+      <div style="position:relative;height:73vh;">
+        <div id="raw-log-outer"
+          style="height:100%;overflow-y:auto;background:var(--bg-code);position:relative;">
+          <!-- inner spacer whose total height = filteredCount * ROW_H -->
+          <div id="raw-log-inner" style="position:relative;width:100%;"></div>
+        </div>
+        <canvas id="raw-log-minimap" width="12" height="2000"
+          style="position:absolute;right:0;top:0;width:12px;height:100%;border-left:1px solid var(--border-default);background:rgba(0,0,0,0.02);pointer-events:none;z-index:10;"></canvas>
       </div>
-    </div>`;
+    `;
 
-        html += '<div style="position: relative; height: 73vh;">';
-        html += '<div id="raw-log-wrapper" style="background: var(--bg-surface); overflow: auto; height: 100%; font-family: Consolas, Monaco, monospace; font-size: 13px; line-height: 1.4; display: flex; flex-direction: column; padding-bottom: 20px;"></div>';
-        html += '<canvas id="log-minimap" width="12" height="2000" style="position: absolute; right: 0; top: 0; width: 12px; height: 100%; border-left: 1px solid var(--border-color); background: rgba(0,0,0,0.02); pointer-events: none; z-index: 10;"></canvas>';
-        html += '</div>';
+    this._outer   = document.getElementById('raw-log-outer');
+    this._inner   = document.getElementById('raw-log-inner');
+    this._minimap = document.getElementById('raw-log-minimap');
 
-        this.container.innerHTML = html;
-        const scrollContainer = document.getElementById('raw-log-wrapper');
-        const searchInput = document.getElementById('raw-log-search');
+    this._wireControls();
+  }
 
-        // Draw Minimap Heatmap
-        this.drawMinimap = (searchMatches = []) => {
-            const canvas = document.getElementById('log-minimap');
-            if (!canvas) return;
-            const ctx = canvas.getContext('2d');
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+  // ── Event wiring ──────────────────────────────────────────────────────────
 
-            logs.forEach((log, idx) => {
-                let color = null;
-                if (log.event.match(/ERROR|EXCEPTION|FATAL/)) color = 'rgba(239, 68, 68, 0.7)'; // Red
-                else if (log.event.includes('SOQL')) color = 'rgba(59, 130, 246, 0.7)'; // Blue
-                else if (log.event.includes('DML')) color = 'rgba(34, 197, 94, 0.7)'; // Green
+  _wireControls() {
+    // Filter chips
+    this.container.querySelectorAll('.rl-chip').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.container.querySelectorAll('.rl-chip').forEach(b => b.classList.remove('chip-active'));
+        btn.classList.add('chip-active');
+        this._activeFilter = btn.dataset.filter;
+        this._applyFilter();
+      });
+    });
 
-                if (color) {
-                    ctx.fillStyle = color;
-                    const y = Math.floor((idx / logs.length) * canvas.height);
-                    ctx.fillRect(0, y - 1, canvas.width, 3); // Draw 3px thick marker
-                }
-            });
+    // Search
+    let debounce;
+    document.getElementById('rl-search').addEventListener('input', e => {
+      clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        this._searchTerm   = e.target.value.toLowerCase();
+        this._searchActive = -1;
+        this._computeSearchMatches();
+        this._renderVisible();
+        this._drawMinimap();
+        if (this._searchMatches.length > 0) this._activateMatch(0);
+      }, 150);
+    });
+    document.getElementById('rl-search').addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); document.getElementById('rl-next').click(); }
+    });
 
-            // Draw active search matches on top
-            if (searchMatches && searchMatches.length > 0) {
-                ctx.fillStyle = '#f97316'; // Vivid orange for search matches
-                searchMatches.forEach(el => {
-                    const idx = parseInt(el.dataset.index);
-                    if (!isNaN(idx)) {
-                        const y = Math.floor((idx / logs.length) * canvas.height);
-                        ctx.fillRect(0, y - 1, canvas.width, 3);
-                    }
-                });
-            }
-        };
-        this.drawMinimap();
+    document.getElementById('rl-next').addEventListener('click', () => {
+      if (!this._searchMatches.length) return;
+      const next = (this._searchActive + 1) % this._searchMatches.length;
+      this._activateMatch(next);
+    });
+    document.getElementById('rl-prev').addEventListener('click', () => {
+      if (!this._searchMatches.length) return;
+      const prev = (this._searchActive - 1 + this._searchMatches.length) % this._searchMatches.length;
+      this._activateMatch(prev);
+    });
 
-        // Export HTML Logic
-        document.getElementById('btn-export-log').addEventListener('click', () => {
-            const clone = scrollContainer.cloneNode(true);
-            // Remove hidden rows so we only export what the user is currently seeing
-            Array.from(clone.children).forEach(el => {
-                if (el.style.display === 'none') clone.removeChild(el);
-            });
+    // Scroll → rAF-throttled virtual render
+    this._outer.addEventListener('scroll', () => {
+      if (this._rafPending) return;
+      this._rafPending = true;
+      requestAnimationFrame(() => {
+        this._rafPending = false;
+        this._renderVisible();
+      });
+    }, { passive: true });
 
-            const htmlContent = `
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>Salesforce Log Export</title>
-                <style>
-                    body { font-family: Consolas, Monaco, monospace; font-size: 13px; line-height: 1.4; background: #fff; color: #333; margin: 0; padding: 20px; }
-                    .log-line { display: flex; white-space: pre; border-bottom: 1px solid #f8f9fa; }
-                    .log-line:hover { background-color: #f1f5f9; }
-                </style>
-            </head>
-            <body>
-                <h2>Salesforce Execution Log</h2>
-                <div style="border: 1px solid #ccc;">${clone.innerHTML}</div>
-            </body>
-            </html>
-        `;
+    // Export
+    document.getElementById('rl-export-btn').addEventListener('click', () => this._exportHtml());
+  }
 
-            const blob = new Blob([htmlContent], { type: 'text/html' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `salesforce-log-${new Date().getTime()}.html`;
-            a.click();
-        });
+  // ── Filtering ─────────────────────────────────────────────────────────────
 
-        const applyFiltersAndSearch = () => {
-            const activeBtn = document.querySelector('.filter-chip.active');
-            const filter = activeBtn ? activeBtn.dataset.filter.split(',') : ['ALL'];
-
-            scrollContainer.querySelectorAll('.log-line').forEach(line => {
-                const ev = line.dataset.event || '';
-                const typeMatch = filter[0] === 'ALL' || filter.some(f => ev.includes(f));
-                line.style.display = typeMatch ? 'flex' : 'none';
-            });
-
-            // Trigger search highlight on visible lines
-            triggerSearch();
-        };
-
-        // Filter Chips Logic
-        document.querySelectorAll('.filter-chip').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                document.querySelectorAll('.filter-chip').forEach(b => {
-                    b.classList.remove('active');
-                    b.style.background = 'transparent';
-                    b.style.color = 'var(--text-main)';
-                    b.style.borderColor = 'var(--border-color)';
-                });
-                e.target.classList.add('active');
-                e.target.style.background = '#0176d3';
-                e.target.style.color = '#fff';
-                e.target.style.borderColor = '#0176d3';
-
-                applyFiltersAndSearch();
-            });
-        });
-
-        // Contextual Search Logic
-        let searchMatches = [];
-        let currentMatchIndex = -1;
-        let debounceTimer;
-
-        const triggerSearch = () => {
-            const term = searchInput.value.toLowerCase();
-
-            // Clear previous highlights
-            searchMatches.forEach(el => {
-                el.classList.remove('search-match', 'search-active');
-            });
-            searchMatches = [];
-            currentMatchIndex = -1;
-
-            if (!term) {
-                document.getElementById('log-search-matches').textContent = '0/0';
-                this.drawMinimap([]); // Clear search from minimap
-                return;
-            }
-
-            scrollContainer.querySelectorAll('.log-line').forEach(line => {
-                if (line.style.display !== 'none' && line.textContent.toLowerCase().includes(term)) {
-                    line.classList.add('search-match');
-                    searchMatches.push(line);
-                }
-            });
-
-            this.drawMinimap(searchMatches);
-
-            if (searchMatches.length > 0) {
-                currentMatchIndex = 0;
-                navigateToMatch(false); // don't scroll if just filtering
-            } else {
-                document.getElementById('log-search-matches').textContent = '0/0';
-            }
-        };
-
-        searchInput.addEventListener('input', () => {
-            clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(() => {
-                triggerSearch();
-                if (searchMatches.length > 0) navigateToMatch(true); // scroll when typing
-            }, 150);
-        });
-
-        searchInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                if (searchMatches.length > 0) document.getElementById('log-search-next').click();
-            }
-        });
-
-        document.getElementById('log-search-next').addEventListener('click', () => {
-            if (searchMatches.length === 0) return;
-            currentMatchIndex = (currentMatchIndex + 1) % searchMatches.length;
-            navigateToMatch(true);
-        });
-
-        document.getElementById('log-search-prev').addEventListener('click', () => {
-            if (searchMatches.length === 0) return;
-            currentMatchIndex = (currentMatchIndex - 1 + searchMatches.length) % searchMatches.length;
-            navigateToMatch(true);
-        });
-
-        const navigateToMatch = (scroll = true) => {
-            document.getElementById('log-search-matches').textContent = `${currentMatchIndex + 1}/${searchMatches.length}`;
-            const targetRow = searchMatches[currentMatchIndex];
-
-            searchMatches.forEach(el => el.classList.remove('search-active'));
-
-            targetRow.classList.add('search-active');
-
-            if (scroll) {
-                targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
-        };
-
-        let i = 0;
-        const chunkSize = 2500; // Render 2500 lines at a time to unfreeze UI
-
-        const renderChunk = () => {
-            let chunkHtml = '';
-            const end = Math.min(i + chunkSize, logs.length);
-
-            for (; i < end; i++) {
-                const log = logs[i];
-                const isHeader = log.event === 'HEADER';
-
-                chunkHtml += `<div class="log-line" data-index="${i}" data-line="${log.lineNumber}" data-event="${log.event}" style="display: flex; white-space: pre; transition: background-color 0.2s;">`;
-
-                // Gutter
-                chunkHtml += `<div style="width: 50px; flex-shrink: 0; text-align: right; padding-right: 8px; color: #888; background: #f8f9fa; border-right: 1px solid #ddd; user-select: none; margin-right: 8px;">${log.lineNumber}</div>`;
-
-                // Content
-                if (isHeader) {
-                    if (log.raw.includes('Execute Anonymous:')) {
-                        const highlighted = this.highlightApex(log.raw);
-                        chunkHtml += `<div class="apex-code-block" style="padding: 0 4px; width: 100%; background-color: #f4f8fd; border-left: 3px solid #0176D3; font-family: Consolas, monospace;">${highlighted}</div>`;
-                    } else {
-                        chunkHtml += `<div style="padding: 0 4px; color: var(--text-main);">${this.escapeHtml(log.raw)}</div>`;
-                    }
-                } else {
-                    const timeColor = '#2e8b57';
-                    const eventColor = '#005fb2'; // Softer blue for events
-                    let detailsHtml = this.escapeHtml(log.details);
-
-                    // SOQL Highlighting
-                    if (log.event.includes('SOQL')) {
-                        detailsHtml = detailsHtml.replace(/\b(SELECT|FROM|WHERE|LIMIT|AND|OR|ORDER BY|GROUP BY)\b/g, '<span style="color:#a1260d; font-weight:bold;">$1</span>');
-                    }
-
-                    // Exceptions
-                    if (log.event.includes('ERROR') || log.event.includes('EXCEPTION') || log.event.includes('FATAL')) {
-                        detailsHtml = `<span style="color: #e53e3e; font-weight: bold;">${detailsHtml}</span>`;
-                    }
-
-                    // Highlight bracket tokens like [EXTERNAL], [95]
-                    detailsHtml = detailsHtml.replace(/\[([a-zA-Z0-9_\-]+)\]/g, '[<span style="color: #0b7a75;">$1</span>]');
-
-                    // Highlight standard Salesforce IDs (15 or 18 chars)
-                    detailsHtml = detailsHtml.replace(/\b([a-zA-Z0-9]{15,18})\b/g, '<span style="color: #d14;">$1</span>');
-
-                    // Highlight numbers occurring after colon (Bytes:3)
-                    detailsHtml = detailsHtml.replace(/:(\d+)\b/g, ':<span style="color: #098658;">$1</span>');
-
-                    chunkHtml += `<div style="padding: 0 4px;">` +
-                        `<span style="color: ${timeColor};">${log.time} <span style="color:#aaa;">(${log.nanos || ''})</span></span>|` +
-                        `<span style="color: ${eventColor}; font-weight:600;">${this.escapeHtml(log.event)}</span>|` +
-                        `<span style="color: var(--text-main);">${detailsHtml}</span>` +
-                        `</div>`;
-                }
-                chunkHtml += `</div>`;
-            }
-
-            scrollContainer.insertAdjacentHTML('beforeend', chunkHtml);
-
-            if (i < logs.length) {
-                requestAnimationFrame(renderChunk);
-            }
-        };
-
-        requestAnimationFrame(renderChunk);
+  _applyFilter() {
+    const filter = this._activeFilter;
+    if (filter === 'ALL') {
+      this._filteredIndices = this._logs.map((_, i) => i);
+    } else {
+      const parts = filter.split(',');
+      this._filteredIndices = [];
+      for (let i = 0; i < this._logs.length; i++) {
+        const ev = this._logs[i].event || '';
+        if (parts.some(p => ev.includes(p))) this._filteredIndices.push(i);
+      }
     }
 
-    escapeHtml(unsafe) {
-        return (unsafe || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    // Update the total height of the inner spacer so scrollbar is accurate
+    this._inner.style.height = (this._filteredIndices.length * RawLogView.ROW_H) + 'px';
+
+    this._searchTerm   = document.getElementById('rl-search')?.value?.toLowerCase() || '';
+    this._searchActive = -1;
+    this._computeSearchMatches();
+    this._outer.scrollTop = 0;
+    this._renderVisible();
+    this._drawMinimap();
+  }
+
+  // ── Virtual scroll render ─────────────────────────────────────────────────
+
+  _renderVisible() {
+    const scrollTop    = this._outer.scrollTop;
+    const viewH        = this._outer.clientHeight;
+    const ROW_H        = RawLogView.ROW_H;
+    const OVERSCAN     = RawLogView.OVERSCAN;
+    const total        = this._filteredIndices.length;
+
+    const firstVis = Math.floor(scrollTop / ROW_H);
+    const lastVis  = Math.ceil((scrollTop + viewH) / ROW_H);
+    const start    = Math.max(0, firstVis - OVERSCAN);
+    const end      = Math.min(total - 1, lastVis + OVERSCAN);
+
+    // Build a Set of active search-match positions in _filteredIndices for O(1) lookup
+    const matchSet  = new Set(this._searchMatches);
+    const activePos = this._searchActive >= 0
+      ? this._searchMatches[this._searchActive]
+      : -1;
+
+    let html = '';
+    for (let pos = start; pos <= end; pos++) {
+      const logIdx = this._filteredIndices[pos];
+      const log    = this._logs[logIdx];
+      const isMatch  = matchSet.has(pos);
+      const isActive = pos === activePos;
+
+      let rowClass = 'rl-row';
+      if (isActive)      rowClass += ' rl-search-active';
+      else if (isMatch)  rowClass += ' rl-search-match';
+
+      html += `<div class="${rowClass}" data-pos="${pos}" style="position:absolute;left:0;right:12px;top:${pos * ROW_H}px;">`;
+      html += `<div class="rl-gutter">${log.lineNumber}</div>`;
+      html += `<div class="rl-cell">${this._formatRow(log)}</div>`;
+      html += `</div>`;
     }
+
+    this._inner.innerHTML = html;
+  }
+
+  // ── Row formatter ─────────────────────────────────────────────────────────
+
+  _formatRow(log) {
+    if (log.event === 'HEADER') {
+      if (log.raw.includes('Execute Anonymous:')) {
+        return `<span style="color:var(--syntax-comment);">${this._esc(log.raw)}</span>`;
+      }
+      return `<span style="color:var(--text-muted);">${this._esc(log.raw)}</span>`;
+    }
+
+    let details = this._esc(log.details);
+
+    // SOQL keyword highlighting
+    if (log.event.includes('SOQL')) {
+      details = details.replace(
+        /\b(SELECT|FROM|WHERE|LIMIT|AND|OR|ORDER BY|GROUP BY|HAVING|IN|NOT IN|LIKE)\b/gi,
+        `<span style="color:var(--syntax-soql-kw);font-weight:var(--font-weight-bold);">$1</span>`
+      );
+    }
+
+    // Error styling
+    if (log.event.match(/ERROR|EXCEPTION|FATAL/)) {
+      details = `<span style="color:var(--status-error);font-weight:var(--font-weight-semibold);">${details}</span>`;
+    }
+
+    // [TOKEN] brackets
+    details = details.replace(
+      /\[([a-zA-Z0-9_\-]+)\]/g,
+      `[<span style="color:var(--syntax-bracket);">$1</span>]`
+    );
+
+    // Numeric values after colon  (Rows:5, Bytes:1024)
+    details = details.replace(
+      /:(\d+)\b/g,
+      `:<span style="color:var(--syntax-number);">$1</span>`
+    );
+
+    return (
+      `<span style="color:var(--syntax-time);">${this._esc(log.time)}</span>` +
+      `<span style="color:var(--text-muted);"> (${log.nanos || ''})</span>|` +
+      `<span style="color:var(--syntax-event);font-weight:var(--font-weight-semibold);">${this._esc(log.event)}</span>|` +
+      `${details}`
+    );
+  }
+
+  // ── Search ────────────────────────────────────────────────────────────────
+
+  _computeSearchMatches() {
+    this._searchMatches = [];
+    if (!this._searchTerm) {
+      document.getElementById('rl-match-count').textContent = '0/0';
+      return;
+    }
+    const term = this._searchTerm;
+    for (let pos = 0; pos < this._filteredIndices.length; pos++) {
+      const log = this._logs[this._filteredIndices[pos]];
+      const text = (log.time + '|' + log.event + '|' + log.details).toLowerCase();
+      if (text.includes(term)) this._searchMatches.push(pos);
+    }
+    this._updateMatchCount();
+  }
+
+  _activateMatch(idx) {
+    this._searchActive = idx;
+    this._updateMatchCount();
+    // Scroll to the match position
+    const pos       = this._searchMatches[idx];
+    const targetTop = pos * RawLogView.ROW_H;
+    const viewH     = this._outer.clientHeight;
+    const scrollTop = this._outer.scrollTop;
+    if (targetTop < scrollTop || targetTop + RawLogView.ROW_H > scrollTop + viewH) {
+      this._outer.scrollTop = Math.max(0, targetTop - viewH / 2);
+    }
+    this._renderVisible();
+  }
+
+  _updateMatchCount() {
+    const el = document.getElementById('rl-match-count');
+    if (!el) return;
+    if (!this._searchMatches.length) {
+      el.textContent = '0/0';
+    } else {
+      el.textContent = `${this._searchActive + 1}/${this._searchMatches.length}`;
+    }
+  }
+
+  // ── Minimap ───────────────────────────────────────────────────────────────
+
+  _drawMinimap() {
+    const canvas = this._minimap;
+    if (!canvas) return;
+    const ctx   = canvas.getContext('2d');
+    const total = this._filteredIndices.length;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (total === 0) return;
+
+    for (let pos = 0; pos < total; pos++) {
+      const log = this._logs[this._filteredIndices[pos]];
+      const ev  = log.event || '';
+      let color = null;
+      if (ev.match(/ERROR|EXCEPTION|FATAL/)) color = 'rgba(220,38,38,0.75)';
+      else if (ev.includes('SOQL'))          color = 'rgba(59,130,246,0.75)';
+      else if (ev.includes('DML'))           color = 'rgba(34,197,94,0.75)';
+      if (!color) continue;
+
+      const y = Math.floor((pos / total) * canvas.height);
+      ctx.fillStyle = color;
+      ctx.fillRect(0, y - 1, canvas.width, 3);
+    }
+
+    // Search matches in orange on top
+    if (this._searchMatches.length > 0) {
+      ctx.fillStyle = 'rgba(249,115,22,0.9)';
+      for (const pos of this._searchMatches) {
+        const y = Math.floor((pos / total) * canvas.height);
+        ctx.fillRect(0, y - 1, canvas.width, 3);
+      }
+    }
+  }
+
+  // ── Export ────────────────────────────────────────────────────────────────
+
+  _exportHtml() {
+    const rows = this._filteredIndices.map(i => {
+      const log = this._logs[i];
+      const esc = s => (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      return `<div style="display:flex;white-space:pre;border-bottom:1px solid #f0f0f0;font-family:Consolas,monospace;font-size:12px;line-height:20px;">` +
+        `<span style="width:52px;text-align:right;padding-right:8px;color:#999;background:#f5f5f5;border-right:1px solid #ddd;margin-right:8px;flex-shrink:0;">${log.lineNumber}</span>` +
+        `<span>${esc(log.raw)}</span>` +
+        `</div>`;
+    }).join('');
+
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Salesforce Log Export</title></head>` +
+      `<body style="margin:0;padding:20px;background:#fff;"><h2 style="font-family:sans-serif;">Salesforce Apex Debug Log</h2>` +
+      `<div>${rows}</div></body></html>`;
+
+    const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+    const a   = Object.assign(document.createElement('a'), { href: url, download: `apex-log-${Date.now()}.html` });
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  _esc(s) {
+    return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
 }
 
 window.RawLogView = RawLogView;

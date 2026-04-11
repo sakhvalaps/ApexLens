@@ -55,7 +55,7 @@ class TimelineVisualization {
         padding: 4px 12px;
         font-size: 11px;
         font-weight: 700;
-        color: var(--text-main);
+        color: var(--text-primary);
         text-transform: uppercase;
         letter-spacing: 0.05em;
       }
@@ -79,8 +79,8 @@ class TimelineVisualization {
         z-index: 100;
       }
       .zoom-btn {
-        background: #fff;
-        border: 1px solid #d1d5db;
+        background: var(--bg-surface);
+        border: 1px solid var(--border-default);
         border-radius: 6px;
         width: 32px;
         height: 32px;
@@ -88,24 +88,24 @@ class TimelineVisualization {
         align-items: center;
         justify-content: center;
         cursor: pointer;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        color: #374151;
+        box-shadow: var(--shadow-xs);
+        color: var(--text-primary);
         font-weight: bold;
         transition: all 0.2s;
       }
       .zoom-btn:hover {
-        background: #f3f4f6;
+        background: var(--bg-sunken);
       }
       </style>
       <div style="display: flex; flex-direction: column; height: 100%;">
-        <div id="timeline-chart-area" style="flex: 1; position: relative; background: #fff; overflow: hidden;">
+        <div id="timeline-chart-area" style="flex: 1; position: relative; background: var(--bg-surface); overflow: hidden;">
            <div class="zoom-controls">
              <button id="timeline-zoom-in" class="zoom-btn" title="Zoom In">＋</button>
              <button id="timeline-zoom-out" class="zoom-btn" title="Zoom Out">－</button>
              <button id="timeline-zoom-reset" class="zoom-btn" title="Reset View">▣</button>
            </div>
         </div>
-        <div style="height: 40px; background: #fdfdfd; border-top: 1px solid #e5e7eb; display: flex; align-items: center; justify-content: center; padding: 0 10px; gap: 16px; flex-shrink: 0; flex-wrap: wrap; z-index: 10;">
+        <div style="height: 40px; background: var(--bg-surface); border-top: 1px solid var(--border-default); display: flex; align-items: center; justify-content: center; padding: 0 10px; gap: 16px; flex-shrink: 0; flex-wrap: wrap; z-index: 10;">
            <div class="legend-chip"><div class="legend-color" style="background:#0ea5e9;"></div>Code Unit</div>
            <div class="legend-chip"><div class="legend-color" style="background:#22c55e;"></div>Method</div>
            <div class="legend-chip"><div class="legend-color" style="background:#a855f7;"></div>Flow</div>
@@ -172,14 +172,17 @@ class TimelineVisualization {
        .attr("transform", `translate(0, ${margin.top})`)
        .call(xAxis);
     
+    const borderColor   = getComputedStyle(document.body).getPropertyValue('--border-default').trim() || '#E5E7EB';
+    const textMutedColor = getComputedStyle(document.body).getPropertyValue('--text-muted').trim() || '#6B7280';
+
     const styleAxis = (g) => {
-       g.select(".domain").attr("stroke", "#ddd");
+       g.select(".domain").attr("stroke", borderColor);
        g.selectAll(".tick line")
          .attr("y2", contentHeight)
-         .attr("stroke-opacity", 0.1)
-         .attr("stroke", "#000");
+         .attr("stroke-opacity", 0.12)
+         .attr("stroke", borderColor);
        g.selectAll(".tick text")
-         .attr("fill", "#6b7280")
+         .attr("fill", textMutedColor)
          .attr("font-weight", "600");
     };
     xAxisGroup.call(styleAxis);
@@ -218,6 +221,8 @@ class TimelineVisualization {
     const barsGroupWrapper = svg.append("g")
                                 .attr("clip-path", "url(#clip-bars)");
 
+    // Remove any leftover tooltip from a previous render before creating a new one
+    d3.selectAll(".timeline-tooltip").remove();
     const tooltip = d3.select("body").append("div").attr("class", "timeline-tooltip");
 
     const bars = barsGroupWrapper.selectAll(".bar")

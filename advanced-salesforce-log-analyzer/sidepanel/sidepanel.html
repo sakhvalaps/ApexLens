@@ -7,10 +7,54 @@
   <link rel="stylesheet" href="../styles/common.css">
   <link rel="stylesheet" href="../styles/themes.css">
   <link rel="stylesheet" href="sidepanel.css">
+  <style>
+    /* ── Progress bar ────────────────────────────────────────────────────── */
+    #apex-progress-track {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      z-index: 9999;
+      pointer-events: none;
+    }
+    #apex-progress-bar {
+      height: 100%;
+      width: 0%;
+      background: var(--brand-primary);
+      transition: width 0.25s ease, opacity 0.4s ease;
+      opacity: 0;
+      border-radius: 0 2px 2px 0;
+    }
 
+    /* ── Theme picker ────────────────────────────────────────────────────── */
+    #theme-picker {
+      appearance: none;
+      -webkit-appearance: none;
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      border: 1.5px solid var(--border-default);
+      border-radius: var(--radius-md);
+      padding: 5px 28px 5px 10px;
+      font-size: var(--font-size-sm);
+      font-family: var(--font-sans);
+      font-weight: var(--font-weight-medium);
+      cursor: pointer;
+      box-shadow: var(--shadow-xs);
+      transition: border-color 0.15s;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236B7280' stroke-width='2.5'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 8px center;
+    }
+    #theme-picker:hover  { border-color: var(--border-strong); }
+    #theme-picker:focus  { outline: 2px solid var(--border-focus); outline-offset: 1px; border-color: var(--border-focus); }
+  </style>
 </head>
 
 <body>
+  <!-- Progress bar (sits above everything, driven by sidepanel.js) -->
+  <div id="apex-progress-track">
+    <div id="apex-progress-bar"></div>
+  </div>
+
   <div class="app-container">
     <header>
       <div class="title-area">
@@ -20,16 +64,30 @@
           <polyline points="2 12 12 17 22 12"></polyline>
         </svg>
         <h1>ApexLens</h1>
+        <span id="apex-status"
+          style="margin-left:14px;font-size:var(--font-size-sm);color:var(--text-muted);display:none;"></span>
       </div>
+
       <div class="header-actions">
         <button id="history-btn" title="Log History">
           🕐 History
         </button>
-        <div class="theme-toggle" id="theme-toggle" style="cursor: pointer;" title="Toggle Theme">🌙</div>
+
+        <!-- Theme picker dropdown (replaces single toggle) -->
+        <select id="theme-picker" title="Choose theme">
+          <option value="">☀️ Light</option>
+          <option value="dark-theme">🌙 Dark</option>
+          <option value="midnight-theme">🌌 Midnight</option>
+          <option value="warm-theme">🍂 Warm</option>
+          <option value="high-contrast-theme">⬛ High Contrast</option>
+        </select>
+
+        <!-- Keep legacy toggle element in DOM so old references don't crash -->
+        <div id="theme-toggle" style="display:none;"></div>
       </div>
     </header>
+
     <nav class="tabs">
-      <!-- Feature 2: Health Score Overview (first / default tab) -->
       <button class="tab active" data-target="overview">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
         Overview
@@ -42,7 +100,6 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M13 6h3a2 2 0 0 1 2 2v7"></path><line x1="6" y1="9" x2="6" y2="21"></line></svg>
         Method Flow
       </button>
-      <!-- Feature 3: Flame Graph -->
       <button class="tab" data-target="flame-graph">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"></path></svg>
         Flame Graph
@@ -59,7 +116,6 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
         Timeline
       </button>
-
       <button class="tab" data-target="dml-dashboard">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
         DML
@@ -81,45 +137,22 @@
         Errors
       </button>
     </nav>
-    <main class="tab-content">
-      <!-- Feature 2: Overview dashboard (default active) -->
-      <div id="overview" class="panel active">
-        <h2>Transaction Health Overview</h2>
-      </div>
-      <div id="raw-log" class="panel">
-        <h2>Log Explorer</h2>
-      </div>
-      <div id="method-flow" class="panel">
-      </div>
-      <!-- Feature 3: Flame graph panel -->
-      <div id="flame-graph" class="panel">
-      </div>
-      <div id="raw-tree" class="panel">
-        <h2>Execution Tree</h2>
-      </div>
-      <div id="apex-debug" class="panel">
-        <h2>Apex Debug Logs</h2>
-      </div>
 
-      <div id="dml-dashboard" class="panel">
-        <h2>DML Operations</h2>
-      </div>
-      <div id="soql-analyzer" class="panel">
-        <h2>SOQL Queries</h2>
-      </div>
-      <div id="perf-dashboard" class="panel">
-        <h2>Performance Metrics</h2>
-      </div>
-      <div id="limits" class="panel">
-        <h2>Governor Limits</h2>
-      </div>
-      <div id="errors" class="panel">
-        <h2>Error Inspector</h2>
-      </div>
-      <div id="timeline" class="panel">
-        <h2>Timeline</h2>
-      </div>
+    <main class="tab-content">
+      <div id="overview"       class="panel active"><h2>Transaction Health Overview</h2></div>
+      <div id="raw-log"        class="panel"><h2>Log Explorer</h2></div>
+      <div id="method-flow"    class="panel"></div>
+      <div id="flame-graph"    class="panel"></div>
+      <div id="raw-tree"       class="panel"><h2>Execution Tree</h2></div>
+      <div id="apex-debug"     class="panel"><h2>Apex Debug Logs</h2></div>
+      <div id="dml-dashboard"  class="panel"><h2>DML Operations</h2></div>
+      <div id="soql-analyzer"  class="panel"><h2>SOQL Queries</h2></div>
+      <div id="perf-dashboard" class="panel"><h2>Performance Metrics</h2></div>
+      <div id="limits"         class="panel"><h2>Governor Limits</h2></div>
+      <div id="errors"         class="panel"><h2>Error Inspector</h2></div>
+      <div id="timeline"       class="panel"><h2>Timeline</h2></div>
     </main>
+
     <script src="../lib/log-parser.js"></script>
     <script src="../lib/analyzer.js"></script>
     <script src="../lib/tree-builder.js"></script>

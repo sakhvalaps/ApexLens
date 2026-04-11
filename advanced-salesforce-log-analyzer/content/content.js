@@ -6,14 +6,31 @@ console.log('Advanced Salesforce Log Analyzer: Content script loaded');
  * Recursively search shadow roots for elements matching a CSS selector.
  * Salesforce Lightning Web Components use shadow DOM heavily; this ensures
  * we find log links even when they are rendered inside shadow roots.
+ *
+ * Improvements:
+ *  - maxDepth guard: stops traversal after 5 levels of nesting (Salesforce
+ *    Lightning log links never appear deeper than ~3 levels) so a pathological
+ *    page cannot cause infinite recursion or a multi-second freeze.
+ *  - Results are capped at 200 to avoid processing an unreasonable number of
+ *    candidate links on extremely large list views.
  */
-function queryShadowDeep(selector, root = document) {
-  const results = Array.from(root.querySelectorAll(selector));
-  root.querySelectorAll('*').forEach(el => {
+function queryShadowDeep(selector, root = document, depth = 0, results = []) {
+  if (depth > 5 || results.length >= 200) return results;
+
+  // Collect direct matches in this root
+  for (const el of root.querySelectorAll(selector)) {
+    results.push(el);
+    if (results.length >= 200) return results;
+  }
+
+  // Descend into shadow roots (only elements that actually have one)
+  for (const el of root.querySelectorAll('*')) {
     if (el.shadowRoot) {
-      results.push(...queryShadowDeep(selector, el.shadowRoot));
+      queryShadowDeep(selector, el.shadowRoot, depth + 1, results);
+      if (results.length >= 200) return results;
     }
-  });
+  }
+
   return results;
 }
 
